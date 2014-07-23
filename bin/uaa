@@ -20,6 +20,7 @@ require 'nats/client'
 require 'vcap/common'
 require 'vcap/logging'
 require 'rest_client'
+require 'cf/registrar'
 
 VCAP::Logging.setup_from_config()
 logger = VCAP::Logging.logger('uaa')
@@ -76,6 +77,16 @@ logger.info("Preparing to launch NATS from #{pid}")
 router_msg = { :host => config["uaa"]["host"]||"127.0.0.1", :port => config["uaa"]["port"]||8080, :uris => config["uaa"]["uris"]||["uaa.vcap.me", "login.vcap.me"], :tags => {:component => "UAA"} }
 router_json = Yajl::Encoder.encode(router_msg)
 
+registrar = Cf::Registrar.new(
+  :mbus => mbus,
+  :host => config["uaa"]["host"]||"127.0.0.1",
+  :port => config["uaa"]["port"]||8080,
+  :uri => config["uaa"]["uris"]||["uaa.vcap.me","login.vcap.me"],
+  :tags => { :component => "UAA" },
+  :index => @config[:index]||0
+)
+
+
 # If there was more than one node the uuid should be #{index}-#{constant}
 discover_msg = { :type => 'UAA',
   :host => "%s:%s" % [config["uaa"]["host"]||"localhost",  config["uaa"]["port"]||8080],
@@ -107,6 +118,7 @@ Thread.new do
   # has to go in a new thread
 
   logger.info("UAA started, registering with NATS")
+=begin
   NATS.start(:uri => mbus) do
 
     NATS.subscribe('vcap.component.discover') do |msg, reply|
@@ -121,7 +133,8 @@ Thread.new do
     # Listen for router starts/restarts
     NATS.subscribe('router.start') { NATS.publish('router.register', router_json) }
   end
-
+=end
+  registrar.register_with_router 
 end
 
 Process.wait(pid)
