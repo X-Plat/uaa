@@ -16,10 +16,12 @@ require "bundler"
 Bundler.setup
 
 require 'yaml'
-require 'nats/client'
 require 'vcap/common'
 require 'vcap/logging'
 require 'rest_client'
+require 'vcap/component'
+require 'cf/registrar'
+require 'cf_message_bus/message_bus'
 
 VCAP::Logging.setup_from_config()
 logger = VCAP::Logging.logger('uaa')
@@ -46,6 +48,9 @@ config["varz"]["username"] ||= VCAP.secure_uuid
 config["varz"]["password"] ||= VCAP.secure_uuid
 config["varz"]["uuid"] ||= VCAP.secure_uuid
 
+
+logger.info("BEGIN REGISTRAR")
+mbus = config["mbus"] || "nats://localhost:4222/"
 logger.info("Launching tomcat from PID=#{Process.pid}")
 
 pre_installed_tomcat = ENV['UAA_TOMCAT']
@@ -73,23 +78,14 @@ File.open(pidfile, 'w') {|f| f.write(pid) }
 
 logger.info("Preparing to launch NATS from #{pid}")
 
-router_msg = { :host => config["uaa"]["host"]||"127.0.0.1", :port => config["uaa"]["port"]||8080, :uris => config["uaa"]["uris"]||["uaa.vcap.me", "login.vcap.me"], :tags => {:component => "UAA"} }
-router_json = Yajl::Encoder.encode(router_msg)
-
-# If there was more than one node the uuid should be #{index}-#{constant}
 discover_msg = { :type => 'UAA',
   :host => "%s:%s" % [config["uaa"]["host"]||"localhost",  config["uaa"]["port"]||8080],
   :index => 0,
   :credentials => [config["varz"]["username"], config["varz"]["password"]],
   :uuid => "0-#{config["varz"]["uuid"]}"
 }
-discover_json = Yajl::Encoder.encode(discover_msg)
 
-logger.info("Sending Router info to NATS: json="+router_json)
-mbus = config["mbus"] || "nats://localhost:4222/"
-
-Thread.new do
-
+EM.run do
   max_wait = 30
   uaa_is_up = false
   start_time = Time.now
@@ -107,21 +103,32 @@ Thread.new do
   # has to go in a new thread
 
   logger.info("UAA started, registering with NATS")
-  NATS.start(:uri => mbus) do
+  
+  mbus = config["mbus"] || "nats://localhost:4222/"
 
-    NATS.subscribe('vcap.component.discover') do |msg, reply|
-      NATS.publish(reply, discover_json)
-    end
+  message_bus = CfMessageBus::MessageBus.new({:uri => mbus, :logger => logger})
+  VCAP::Component.register(
+    :type => 'UAA',
+    :host => config["uaa"]["host"]||"127.0.0.1",
+    :index => config["index"]||0,
+    :config => config,
+    :nats => message_bus,
+    :logger => logger
+  )
 
-    # Also announce ourselves on startup..
-    NATS.publish('vcap.component.announce', discover_json)
+  registrar = Cf::Registrar.new(
+    :mbus => mbus,
+    :host => config["uaa"]["host"]||"127.0.0.1",
+    :port => config["uaa"]["port"]||8080,
+    :uri => config["uaa"]["uris"]||["uaa.vcap.me","login.vcap.me"],
+    :tags => { :component => "UAA" },
+    :index => config["index"]||0
+  )
+  registrar.register_with_router 
+  logger.info "UAA registered."
 
-    # Tell all current routers where to find us.
-    NATS.publish('router.register', router_json)
-    # Listen for router starts/restarts
-    NATS.subscribe('router.start') { NATS.publish('router.register', router_json) }
+  EM.defer do
+    Process.wait(pid)
+    Process.exit true
   end
-
 end
-
-Process.wait(pid)
