@@ -78,18 +78,12 @@ File.open(pidfile, 'w') {|f| f.write(pid) }
 
 logger.info("Preparing to launch NATS from #{pid}")
 
-router_msg = { :host => config["uaa"]["host"]||"127.0.0.1", :port => config["uaa"]["port"]||8080, :uris => config["uaa"]["uris"]||["uaa.vcap.me", "login.vcap.me"], :tags => {:component => "UAA"} }
-router_json = Yajl::Encoder.encode(router_msg)
-# If there was more than one node the uuid should be #{index}-#{constant}
 discover_msg = { :type => 'UAA',
   :host => "%s:%s" % [config["uaa"]["host"]||"localhost",  config["uaa"]["port"]||8080],
   :index => 0,
   :credentials => [config["varz"]["username"], config["varz"]["password"]],
   :uuid => "0-#{config["varz"]["uuid"]}"
 }
-discover_json = Yajl::Encoder.encode(discover_msg)
-
-logger.info("Sending Router info to NATS: json="+router_json)
 
 EM.run do
   max_wait = 30
