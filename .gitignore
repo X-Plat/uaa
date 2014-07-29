@@ -25,3 +25,4 @@ Servers/
 *.swo
 coverage.ec
 git.properties
+vendor/cache
