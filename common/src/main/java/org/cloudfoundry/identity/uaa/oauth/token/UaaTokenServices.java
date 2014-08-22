@@ -44,8 +44,11 @@ import java.util.UUID;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.cloudfoundry.identity.uaa.audit.event.TokenIssuedEvent;
+import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthentication;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
+import org.cloudfoundry.identity.uaa.oauth.RemoteUserAuthentication;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval.ApprovalStatus;
 import org.cloudfoundry.identity.uaa.oauth.approval.ApprovalStore;
@@ -55,10 +58,14 @@ import org.cloudfoundry.identity.uaa.user.UaaUserDatabase;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.type.TypeReference;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.jwt.Jwt;
 import org.springframework.security.jwt.JwtHelper;
 import org.springframework.security.oauth2.client.resource.OAuth2AccessDeniedException;
@@ -93,7 +100,7 @@ import org.springframework.util.StringUtils;
  * 
  */
 public class UaaTokenServices implements AuthorizationServerTokenServices, ResourceServerTokenServices,
-                InitializingBean {
+                InitializingBean, ApplicationEventPublisherAware {
 
     private int refreshTokenValiditySeconds = 60 * 60 * 24 * 30; // default 30
                                                                  // days.
@@ -115,6 +122,13 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
     private Set<String> defaultUserAuthorities = new HashSet<String>();
 
     private ApprovalStore approvalStore = null;
+
+    private ApplicationEventPublisher applicationEventPublisher;
+
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+        this.applicationEventPublisher = applicationEventPublisher;
+    }
 
     @Override
     public OAuth2AccessToken refreshAccessToken(String refreshTokenValue, AuthorizationRequest request)
@@ -147,11 +161,11 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
             throw new InvalidGrantException("Wrong client for this refresh token: " + refreshTokenValue);
         }
 
-        String username = (String) claims.get(USER_NAME);
+        String userid = (String) claims.get(USER_ID);
 
         // TODO: Need to add a lookup by id so that the refresh token does not
         // need to contain a name
-        UaaUser user = userDatabase.retrieveUserByName(username);
+        UaaUser user = userDatabase.retrieveUserById(userid);
 
         Integer refreshTokenIssuedAt = (Integer) claims.get(IAT);
         long refreshTokenIssueDate = refreshTokenIssuedAt.longValue() * 1000l;
@@ -193,7 +207,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         // explicitly by the user
         ClientDetails client = clientDetailsService.loadClientByClientId(clientId);
         String grantType = claims.get(GRANT_TYPE).toString();
-        checkForApproval(username, clientId, requestedScopes,
+        checkForApproval(userid, clientId, requestedScopes,
                         getAutoApprovedScopes(grantType, tokenScopes, client),
                         new Date(refreshTokenIssueDate));
 
@@ -211,7 +225,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         return accessToken;
     }
 
-    private void checkForApproval(String username, String clientId, Collection<String> requestedScopes,
+    private void checkForApproval(String userid, String clientId, Collection<String> requestedScopes,
                     Collection<String> autoApprovedScopes, Date updateCutOff) {
         Set<String> approvedScopes = new HashSet<String>();
         approvedScopes.addAll(autoApprovedScopes);
@@ -220,7 +234,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         // auto approved, not expired,
         // not DENIED and not approved more recently than when this access token
         // was issued.
-        List<Approval> approvals = approvalStore.getApprovals(username, clientId);
+        List<Approval> approvals = approvalStore.getApprovals(userid, clientId);
         for (Approval approval : approvals) {
             if (requestedScopes.contains(approval.getScope()) && approval.getStatus() == ApprovalStatus.APPROVED) {
                 if (!approval.isCurrentlyActive()) {
@@ -285,6 +299,8 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
 
         // This setter copies the value and returns. Don't change.
         accessToken = accessToken.setValue(token);
+
+        publish(new TokenIssuedEvent(accessToken, SecurityContextHolder.getContext().getAuthentication()));
 
         return accessToken;
     }
@@ -351,10 +367,9 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
             ClientDetails client = clientDetailsService.loadClientByClientId(authentication.getName());
             userId = client.getClientId();
             clientScopes = client.getAuthorities();
-        }
-        else {
-            UaaUser user = userDatabase.retrieveUserByName(authentication.getName());
-            userId = user.getId();
+        } else {
+            userId = getUserId(authentication);
+            UaaUser user = userDatabase.retrieveUserById(userId);
             username = user.getUsername();
             userEmail = user.getEmail();
         }
@@ -384,7 +399,6 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
                         refreshToken != null ? refreshToken.getValue() : null, additionalAuthorizationAttributes);
 
         return accessToken;
-
     }
 
     /**
@@ -428,7 +442,8 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         ExpiringOAuth2RefreshToken token = new DefaultExpiringOAuth2RefreshToken(UUID.randomUUID().toString(),
                         new Date(System.currentTimeMillis() + (validitySeconds * 1000L)));
 
-        UaaUser user = userDatabase.retrieveUserByName(((Principal) authentication.getPrincipal()).getName());
+        String userId = getUserId(authentication);
+        UaaUser user = userDatabase.retrieveUserById(userId);
 
         String content;
         try {
@@ -443,6 +458,10 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         ExpiringOAuth2RefreshToken refreshToken = new DefaultExpiringOAuth2RefreshToken(jwtToken, token.getExpiration());
 
         return refreshToken;
+    }
+
+    protected String getUserId(OAuth2Authentication authentication) {
+        return Origin.getUserId(authentication.getUserAuthentication());
     }
 
     private Map<String, ?> createJWTRefreshToken(OAuth2RefreshToken token, UaaUser user, Set<String> scopes,
@@ -473,6 +492,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         }
         if (!"client_credentials".equals(grantType)) {
             response.put(USER_NAME, user.getUsername());
+            response.put(USER_ID, user.getId());
         }
 
         response.put(AUD, scopes);
@@ -578,7 +598,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
         // Is this a user token?
         if (claims.containsKey(EMAIL)) {
             UaaUser user = new UaaUser((String) claims.get(USER_ID), (String) claims.get(USER_NAME), null,
-                            (String) claims.get(EMAIL), UaaAuthority.USER_AUTHORITIES, null, null, null, null);
+                            (String) claims.get(EMAIL), UaaAuthority.USER_AUTHORITIES, null, null, null, null, null, null);
 
             UaaPrincipal principal = new UaaPrincipal(user);
             userAuthentication = new UaaAuthentication(principal, UaaAuthority.USER_AUTHORITIES, null);
@@ -618,9 +638,9 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
 
         // Only check user access tokens
         if (null != email) {
-            String username = (String) claims.get(USER_NAME);
+            String userId = (String)claims.get(USER_ID);
 
-            UaaUser user = userDatabase.retrieveUserByName(username);
+            UaaUser user = userDatabase.retrieveUserById(userId);
 
             Integer accessTokenIssuedAt = (Integer) claims.get(IAT);
             long accessTokenIssueDate = accessTokenIssuedAt.longValue() * 1000l;
@@ -644,7 +664,7 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
             if (autoApprovedScopes.containsAll(tokenScopes)) {
                 return token;
             }
-            checkForApproval(username, clientId, tokenScopes, autoApprovedScopes, new Date(accessTokenIssueDate));
+            checkForApproval(userId, clientId, tokenScopes, autoApprovedScopes, new Date(accessTokenIssueDate));
         }
 
         return token;
@@ -719,6 +739,12 @@ public class UaaTokenServices implements AuthorizationServerTokenServices, Resou
 
     public void setApprovalStore(ApprovalStore approvalStore) {
         this.approvalStore = approvalStore;
+    }
+
+    private void publish(TokenIssuedEvent event) {
+        if (applicationEventPublisher != null) {
+            applicationEventPublisher.publishEvent(event);
+        }
     }
 
 }

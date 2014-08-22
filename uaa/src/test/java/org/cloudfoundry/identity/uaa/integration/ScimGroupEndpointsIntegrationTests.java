@@ -77,7 +77,7 @@ public class ScimGroupEndpointsIntegrationTests {
 
     private static final List<String> defaultGroups = Arrays.asList("openid", "scim.me", "cloud_controller.read",
                     "cloud_controller.write", "password.write", "scim.userids", "uaa.user", "approvals.me",
-                    "oauth.approvals", "cloud_controller.permissions");
+                    "oauth.approvals", "cloud_controller_service_permissions.read");
 
     @Rule
     public ServerRunning serverRunning = ServerRunning.isRunning();
@@ -249,7 +249,7 @@ public class ScimGroupEndpointsIntegrationTests {
         // check that the group was not created
         @SuppressWarnings("unchecked")
         Map<String, String> g2 = client.getForObject(
-                        serverRunning.getUrl(groupEndpoint + "?filter=displayName eq '{name}'"), Map.class, CFID);
+                        serverRunning.getUrl(groupEndpoint + "?filter=displayName eq \"{name}\""), Map.class, CFID);
         assertTrue(g2.containsKey("totalResults"));
         assertEquals(0, g2.get("totalResults"));
     }
@@ -290,7 +290,7 @@ public class ScimGroupEndpointsIntegrationTests {
         // check that the group does not exist anymore
         @SuppressWarnings("unchecked")
         Map<String, Object> g2 = client.getForObject(
-                        serverRunning.getUrl(groupEndpoint + "?filter=displayName eq '{name}'"), Map.class, DELETE_ME);
+                        serverRunning.getUrl(groupEndpoint + "?filter=displayName eq \"{name}\""), Map.class, DELETE_ME);
         assertTrue(g2.containsKey("totalResults"));
         assertEquals(0, g2.get("totalResults"));
 

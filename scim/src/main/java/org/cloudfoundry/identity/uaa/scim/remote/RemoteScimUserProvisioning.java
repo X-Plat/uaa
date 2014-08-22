@@ -99,13 +99,12 @@ public class RemoteScimUserProvisioning implements ScimUserProvisioning {
     }
 
     @Override
-    public boolean changePassword(String id, String oldPassword, String newPassword)
+    public void changePassword(String id, String oldPassword, String newPassword)
                     throws ScimResourceNotFoundException {
         PasswordChangeRequest request = new PasswordChangeRequest();
         request.setOldPassword(oldPassword);
         request.setPassword(newPassword);
         restTemplate.put(baseUrl + "/User/{id}/password", request, id);
-        return true;
     }
 
     @Override
@@ -123,5 +122,10 @@ public class RemoteScimUserProvisioning implements ScimUserProvisioning {
         headers.set("If-Match", String.format("%d", version));
         return restTemplate.exchange(baseUrl + "/User/{id}", HttpMethod.DELETE, new HttpEntity<Void>(headers),
                         ScimUser.class, id).getBody();
+    }
+
+    @Override
+    public int delete(String filter) {
+        throw new UnsupportedOperationException();
     }
 }

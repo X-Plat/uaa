@@ -14,14 +14,17 @@ package org.cloudfoundry.identity.api.web;
 
 import static org.junit.Assert.assertNotNull;
 
+import java.net.URL;
 import java.util.Date;
 
+import org.cloudfoundry.client.lib.CloudCredentials;
 import org.cloudfoundry.client.lib.CloudFoundryClient;
-import org.cloudfoundry.client.lib.CloudInfo;
+import org.cloudfoundry.client.lib.domain.CloudInfo;
 import org.cloudfoundry.identity.uaa.test.TestAccountSetup;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.springframework.http.HttpHeaders;
@@ -53,6 +56,7 @@ public class CloudfoundryApiIntegrationTests {
     }
 
     @Test
+    @Ignore
     public void testClientAccessesProtectedResource() throws Exception {
         OAuth2AccessToken accessToken = context.getAccessToken();
         // add an approval for the scope requested
@@ -65,22 +69,23 @@ public class CloudfoundryApiIntegrationTests {
         // serverRunning.getUrl("/uaa/approvals"),
         // HttpMethod.PUT,
         // new HttpEntity<Approval[]>((new Approval[]{new
-        // Approval(testAccounts.getUserName(), "app",
+        // Approval(testAccounts.getUserId(), "app",
         // "cloud_controller.read", expiresAt,
         // ApprovalStatus.APPROVED,oneMinuteAgo), new
-        // Approval(testAccounts.getUserName(), "app",
+        // Approval(testAccounts.getUserId(), "app",
         // "openid", expiresAt, ApprovalStatus.APPROVED,oneMinuteAgo),new
-        // Approval(testAccounts.getUserName(), "app",
+        // Approval(testAccounts.getUserId(), "app",
         // "password.write", expiresAt, ApprovalStatus.APPROVED,oneMinuteAgo)}),
         // approvalHeaders), Approval[].class);
         // assertEquals(HttpStatus.OK, approvals.getStatusCode());
 
         // System.err.println(accessToken);
         // The client doesn't know how to use an OAuth bearer token
-        CloudFoundryClient client = new CloudFoundryClient("Bearer " + accessToken.getValue(),
-                        testAccounts.getCloudControllerUrl());
+        CloudFoundryClient client = new CloudFoundryClient(
+                new CloudCredentials(accessToken),
+                new URL("http", "localhost", 8080, "api")
+        );
         CloudInfo info = client.getCloudInfo();
         assertNotNull("Wrong cloud info: " + info.getDescription(), info.getUser());
     }
-
 }

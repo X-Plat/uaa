@@ -13,12 +13,14 @@
 
 -->
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.springframework.org/schema/beans"
-    xmlns:sec="http://www.springframework.org/schema/security" xmlns:oauth="http://www.springframework.org/schema/security/oauth2"
-    xmlns:mvc="http://www.springframework.org/schema/mvc"
-    xsi:schemaLocation="http://www.springframework.org/schema/security/oauth2 http://www.springframework.org/schema/security/spring-security-oauth2-1.0.xsd
+       xmlns:sec="http://www.springframework.org/schema/security"
+       xmlns:oauth="http://www.springframework.org/schema/security/oauth2"
+       xmlns:mvc="http://www.springframework.org/schema/mvc"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="http://www.springframework.org/schema/security/oauth2 http://www.springframework.org/schema/security/spring-security-oauth2-1.0.xsd
 		http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-3.2.xsd
-		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.2.xsd
-		http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd">
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
+		http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd">
 
     <bean class="org.cloudfoundry.identity.uaa.config.YamlConfigurationValidator">
         <constructor-arg>
@@ -49,8 +51,8 @@
 
     <import resource="spring/oauth-clients.xml" />
     <!-- The order of these imports is important because of Spring Security filter chain rules -->
-    <import resource="spring/oauth-endpoints.xml" />
     <import resource="spring/login-server-security.xml" />
+    <import resource="spring/oauth-endpoints.xml" />
     <import resource="spring/scim-endpoints.xml" />
     <import resource="spring/approvals-endpoints.xml" />
     <import resource="spring/client-admin-endpoints.xml" />
@@ -166,4 +168,52 @@
 
     <bean id="healthzEndpoint" class="org.cloudfoundry.identity.uaa.web.HealthzEndpoint" />
 
+    <context:annotation-config />
+    <bean class="org.cloudfoundry.identity.uaa.coverage.CoverageConfig" />
+
+    <beans profile="ldap">
+        <import resource="spring/ldap-integration.xml"/>
+
+        <bean id="authzAuthenticationMgr" class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager">
+            <property name="delegates">
+                <list>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="authenticationManager" ref="uaaAuthenticationMgr"/>
+                        <property name="stopIf" value="org.cloudfoundry.identity.uaa.authentication.AuthenticationPolicyRejectionException"/>
+                    </bean>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="required" value="ifPreviousFalse"/>
+                        <property name="authenticationManager" ref="ldapAuthenticationManager"/>
+                    </bean>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="required" value="ifPreviousTrue"/>
+                        <property name="authenticationManager" ref="ldapLoginAuthenticationMgr"/>
+                    </bean>
+                </list>
+            </property>
+        </bean>
+    </beans>
+
+    <beans profile="keystone">
+        <import resource="spring/keystone-integration.xml"/>
+
+        <bean id="authzAuthenticationMgr" class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager">
+            <property name="delegates">
+                <list>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="authenticationManager" ref="uaaAuthenticationMgr"/>
+                        <property name="stopIf" value="org.cloudfoundry.identity.uaa.authentication.AuthenticationPolicyRejectionException"/>
+                    </bean>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="required" value="ifPreviousFalse"/>
+                        <property name="authenticationManager" ref="keystoneAuthenticationManager"/>
+                    </bean>
+                    <bean class="org.cloudfoundry.identity.uaa.authentication.manager.ChainedAuthenticationManager$AuthenticationManagerConfiguration">
+                        <property name="required" value="ifPreviousTrue"/>
+                        <property name="authenticationManager" ref="keystoneLoginAuthenticationMgr"/>
+                    </bean>
+                </list>
+            </property>
+        </bean>
+    </beans>
 </beans>

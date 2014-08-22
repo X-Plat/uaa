@@ -23,18 +23,24 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import org.cloudfoundry.identity.uaa.audit.event.ApprovalModifiedEvent;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval.ApprovalStatus;
 import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
 import org.cloudfoundry.identity.uaa.rest.jdbc.LimitSqlAdapter;
 import org.cloudfoundry.identity.uaa.rest.jdbc.SimpleSearchQueryConverter;
+import org.cloudfoundry.identity.uaa.test.MockAuthentication;
 import org.cloudfoundry.identity.uaa.test.NullSafeSystemProfileValueSource;
+import org.cloudfoundry.identity.uaa.test.TestApplicationEventPublisher;
 import org.cloudfoundry.identity.uaa.test.TestUtils;
+import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.annotation.IfProfileValue;
 import org.springframework.test.annotation.ProfileValueSourceConfiguration;
 import org.springframework.test.context.ContextConfiguration;
@@ -56,6 +62,8 @@ public class JdbcApprovalStoreTests {
 
     private JdbcApprovalStore dao;
 
+    private TestApplicationEventPublisher<ApprovalModifiedEvent> eventPublisher;
+
     @Before
     public void createDatasource() {
 
@@ -63,6 +71,9 @@ public class JdbcApprovalStoreTests {
 
         dao = new JdbcApprovalStore(template, new JdbcPagingListFactory(template, limitSqlAdapter),
                         new SimpleSearchQueryConverter());
+
+        eventPublisher = TestApplicationEventPublisher.forEventClass(ApprovalModifiedEvent.class);
+        dao.setApplicationEventPublisher(eventPublisher);
 
         addApproval("u1", "c1", "uaa.user", 6000, APPROVED);
         addApproval("u1", "c2", "uaa.admin", 12000, DENIED);
@@ -98,7 +109,7 @@ public class JdbcApprovalStoreTests {
 
         Approval approval = approvals.get(0);
         assertEquals(clientId, approval.getClientId());
-        assertEquals(userName, approval.getUserName());
+        assertEquals(userName, approval.getUserId());
         assertEquals(Math.round(expiresAt.getTime() / 1000), Math.round(approval.getExpiresAt().getTime() / 1000));
         assertEquals(Math.round(lastUpdatedAt.getTime() / 1000),
                         Math.round(approval.getLastUpdatedAt().getTime() / 1000));
@@ -108,7 +119,7 @@ public class JdbcApprovalStoreTests {
 
     @Test
     public void canGetApprovals() {
-        assertEquals(3, dao.getApprovals("userName pr").size());
+        assertEquals(3, dao.getApprovals("user_id pr").size());
         assertEquals(1, dao.getApprovals("u2", "c1").size());
         assertEquals(0, dao.getApprovals("u2", "c2").size());
         assertEquals(1, dao.getApprovals("u1", "c1").size());
@@ -127,9 +138,9 @@ public class JdbcApprovalStoreTests {
 
     @Test
     public void canRevokeApprovals() {
-        assertEquals(2, dao.getApprovals("userName eq 'u1'").size());
-        assertTrue(dao.revokeApprovals("userName eq 'u1'"));
-        assertEquals(0, dao.getApprovals("userName eq 'u1'").size());
+        assertEquals(2, dao.getApprovals("user_id eq \"u1\"").size());
+        assertTrue(dao.revokeApprovals("user_id eq \"u1\""));
+        assertEquals(0, dao.getApprovals("user_id eq \"u1\"").size());
     }
 
     @Test
@@ -160,27 +171,59 @@ public class JdbcApprovalStoreTests {
         Approval app = dao.getApprovals("u1", "c1").iterator().next();
         Date now = new Date();
 
-        dao.refreshApproval(new Approval(app.getUserName(), app.getClientId(), app.getScope(), now, APPROVED));
+        dao.refreshApproval(new Approval(app.getUserId(), app.getClientId(), app.getScope(), now, APPROVED));
         app = dao.getApprovals("u1", "c1").iterator().next();
         assertEquals(Math.round(now.getTime() / 1000), Math.round(app.getExpiresAt().getTime() / 1000));
     }
 
     @Test
     public void canPurgeExpiredApprovals() throws InterruptedException {
-        List<Approval> approvals = dao.getApprovals("userName pr");
+        List<Approval> approvals = dao.getApprovals("user_id pr");
         assertEquals(3, approvals.size());
         addApproval("u3", "c3", "test1", 0, APPROVED);
         addApproval("u3", "c3", "test2", 0, DENIED);
         addApproval("u3", "c3", "test3", 0, APPROVED);
-        List<Approval> newApprovals = dao.getApprovals("userName pr");
+        List<Approval> newApprovals = dao.getApprovals("user_id pr");
         assertEquals(6, newApprovals.size());
 
         // On mysql, the expiry is rounded off to the nearest second so
         // the following assert could randomly fail.
         Thread.sleep(500);
         dao.purgeExpiredApprovals();
-        List<Approval> remainingApprovals = dao.getApprovals("userName pr");
+        List<Approval> remainingApprovals = dao.getApprovals("user_id pr");
         assertEquals(3, remainingApprovals.size());
     }
 
+    @Test
+    public void testAddingAndUpdatingAnApprovalPublishesEvents() throws Exception {
+        UaaTestAccounts testAccounts = UaaTestAccounts.standard(null);
+
+        Approval approval = new Approval(testAccounts.getUserName(), "app", "cloud_controller.read", 1000, ApprovalStatus.APPROVED);
+
+        eventPublisher.clearEvents();
+
+        MockAuthentication authentication = new MockAuthentication();
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        dao.addApproval(approval);
+
+        Assert.assertEquals(1, eventPublisher.getEventCount());
+
+        ApprovalModifiedEvent addEvent = eventPublisher.getLatestEvent();
+        Assert.assertEquals(approval, addEvent.getSource());
+        Assert.assertEquals(authentication, addEvent.getAuthentication());
+        Assert.assertEquals("{\"scope\":\"cloud_controller.read\",\"status\":\"APPROVED\"}", addEvent.getAuditEvent().getData());
+
+        approval.setStatus(DENIED);
+
+        eventPublisher.clearEvents();
+        dao.addApproval(approval);
+
+        Assert.assertEquals(1, eventPublisher.getEventCount());
+
+        ApprovalModifiedEvent modifyEvent = eventPublisher.getLatestEvent();
+        Assert.assertEquals(approval, modifyEvent.getSource());
+        Assert.assertEquals(authentication, modifyEvent.getAuthentication());
+        Assert.assertEquals("{\"scope\":\"cloud_controller.read\",\"status\":\"DENIED\"}", addEvent.getAuditEvent().getData());
+    }
 }

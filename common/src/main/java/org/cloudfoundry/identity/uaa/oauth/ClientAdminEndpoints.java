@@ -412,9 +412,9 @@ public class ClientAdminEndpoints implements InitializingBean {
         return result;
     }
 
-    private void deleteApprovals(String clientId) {
+    protected void deleteApprovals(String clientId) {
         if (approvalStore!=null) {
-            approvalStore.revokeApprovals(String.format("clientId eq '%s'", clientId));
+            approvalStore.revokeApprovals(String.format("client_id eq \"%s\"", clientId));
         } else {
             throw new UnsupportedOperationException("No approval store configured on "+getClass().getName());
         }
@@ -472,7 +472,11 @@ public class ClientAdminEndpoints implements InitializingBean {
             throw new NoSuchClientException("No such client: " + client);
         }
 
-        checkPasswordChangeIsAllowed(clientDetails, change.getOldSecret());
+        try {
+            checkPasswordChangeIsAllowed(clientDetails, change.getOldSecret());
+        } catch (IllegalStateException e) {
+            throw new InvalidClientDetailsException(e.getMessage());
+        }
 
         clientRegistrationService.updateClientSecret(client, change.getSecret());
 

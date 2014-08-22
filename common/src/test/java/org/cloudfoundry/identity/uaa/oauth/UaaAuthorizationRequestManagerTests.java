@@ -16,6 +16,7 @@ package org.cloudfoundry.identity.uaa.oauth;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -71,7 +72,6 @@ public class UaaAuthorizationRequestManagerTests {
         parameters.put("client_id", "foo");
         factory = new UaaAuthorizationRequestManager(clientDetailsService);
         factory.setSecurityContextAccessor(new StubSecurityContextAccessor());
-        factory.setExternalGroupMappingAuthorizationManager(null);
         Mockito.when(clientDetailsService.loadClientByClientId("foo")).thenReturn(client);
     }
 
@@ -105,6 +105,28 @@ public class UaaAuthorizationRequestManagerTests {
         client.setScope(StringUtils.commaDelimitedListToSet("one,two,foo.bar"));
         AuthorizationRequest request = factory.createAuthorizationRequest(parameters);
         assertEquals(StringUtils.commaDelimitedListToSet("foo.bar"), new TreeSet<String>(request.getScope()));
+        factory.validateParameters(request.getAuthorizationParameters(), client);
+    }
+
+    @Test
+    public void testWildcardScopesIncludesAuthoritiesForUser() {
+        SecurityContextAccessor securityContextAccessor = new StubSecurityContextAccessor() {
+            @Override
+            public boolean isUser() {
+                return true;
+            }
+
+            @Override
+            public Collection<? extends GrantedAuthority> getAuthorities() {
+                return AuthorityUtils.commaSeparatedStringToAuthorityList(
+                    "space.1.developer,space.2.developer,space.1.admin"
+                );
+            }
+        };
+        factory.setSecurityContextAccessor(securityContextAccessor);
+        client.setScope(StringUtils.commaDelimitedListToSet("space.*.developer"));
+        AuthorizationRequest request = factory.createAuthorizationRequest(parameters);
+        assertEquals(StringUtils.commaDelimitedListToSet("space.1.developer,space.2.developer"), new TreeSet<String>(request.getScope()));
         factory.validateParameters(request.getAuthorizationParameters(), client);
     }
 
@@ -199,6 +221,18 @@ public class UaaAuthorizationRequestManagerTests {
         factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write", "implicit", null));
     }
 
+    @Test
+    public void testScopesValidWithWildcard() throws Exception {
+        parameters.put("scope","read,write,space.1.developer,space.2.developer");
+        factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write,space.*.developer", "implicit", null));
+    }
+
+    @Test(expected = InvalidScopeException.class)
+    public void testScopesInvValidWithWildcard() throws Exception {
+        parameters.put("scope","read,write,space.1.developer,space.2.developer,space.1.admin");
+        factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write,space.*.developer", "implicit", null));
+    }
+
     @Test(expected = InvalidScopeException.class)
     public void testScopesInvalid() throws Exception {
         parameters.put("scope", "admin");
@@ -206,95 +240,71 @@ public class UaaAuthorizationRequestManagerTests {
     }
 
     @Test
-    public void testSuccessWithAnExternalAuthorizationRequestWithASingleExternallyMappedScope() {
-        parameters.put("client_id", "foo");
-        parameters.put("scope", "read");
-        parameters.put("authorities", "{\"externalGroups.0\": \"cn=test_org,ou=people,o=springsource,o=org\"}");
-        SecurityContextAccessor securityContextAccessor = new StubSecurityContextAccessor() {
-            @Override
-            public boolean isUser() {
-                return true;
-            }
+    public void testWildcardIntersect1() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer"));
+        Set<String> requested = client;
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
 
-            @Override
-            public Collection<? extends GrantedAuthority> getAuthorities() {
-                return AuthorityUtils.commaSeparatedStringToAuthorityList("foo.bar,spam.baz");
-            }
-        };
-        factory.setSecurityContextAccessor(securityContextAccessor);
-        TestExternalAuthorizationManager externalAuthManager = new TestExternalAuthorizationManager();
-        Set<String> acmeScopes = new HashSet<String>();
-        acmeScopes.add("acme");
-        externalAuthManager.defineScopesForAuthorities(
-                        "{\"externalGroups.0\": \"cn=test_org,ou=people,o=springsource,o=org\"}", acmeScopes);
-
-        factory.setExternalGroupMappingAuthorizationManager(externalAuthManager);
-        AuthorizationRequest authorizationRequest = factory.createAuthorizationRequest(parameters);
-        assertEquals("acme",
-                        ((DefaultAuthorizationRequest) authorizationRequest).getAuthorizationParameters().get(
-                                        "external_scopes"));
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(2, result.size());
+        assertTrue(result.contains("space.1.developer"));
+        assertTrue(result.contains("space.2.developer"));
     }
 
     @Test
-    public void testSuccessWithAnExternalAuthorizationRequestWithMultipleExternallyMappedScopes() {
-        parameters.put("client_id", "foo");
-        parameters.put("scope", "read");
-        parameters.put("authorities", "{\"externalGroups.0\": \"cn=test_org,ou=people,o=springsource,o=org\"}");
-        SecurityContextAccessor securityContextAccessor = new StubSecurityContextAccessor() {
-            @Override
-            public boolean isUser() {
-                return true;
-            }
+    public void testWildcardIntersect2() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer"));
+        Set<String> requested = new HashSet<>(Arrays.asList("space.1.developer"));
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
 
-            @Override
-            public Collection<? extends GrantedAuthority> getAuthorities() {
-                return AuthorityUtils.commaSeparatedStringToAuthorityList("foo.bar,spam.baz");
-            }
-        };
-        factory.setSecurityContextAccessor(securityContextAccessor);
-        TestExternalAuthorizationManager externalAuthManager = new TestExternalAuthorizationManager();
-        Set<String> acmeScopes = new HashSet<String>();
-        acmeScopes.add("acme");
-        acmeScopes.add("acme1");
-        externalAuthManager.defineScopesForAuthorities(
-                        "{\"externalGroups.0\": \"cn=test_org,ou=people,o=springsource,o=org\"}", acmeScopes);
-
-        factory.setExternalGroupMappingAuthorizationManager(externalAuthManager);
-        AuthorizationRequest authorizationRequest = factory.createAuthorizationRequest(parameters);
-        assertEquals("acme1 acme", ((DefaultAuthorizationRequest) authorizationRequest).getAuthorizationParameters()
-                        .get("external_scopes"));
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(1, result.size());
+        assertTrue(result.contains("space.1.developer"));
     }
 
     @Test
-    public void testSuccessWithAnExternalAuthorizationRequestWithNoExternallyMappedScopes() {
-        parameters.put("client_id", "foo");
-        parameters.put("scope", "read");
+    public void testWildcardIntersect3() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer"));
+        Set<String> requested = new HashSet<>(Arrays.asList("space.*.admin"));
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
 
-        TestExternalAuthorizationManager externalAuthManager = new TestExternalAuthorizationManager();
-        Set<String> acmeScopes = new HashSet<String>();
-        acmeScopes.add("acme");
-        externalAuthManager.defineScopesForAuthorities(
-                        "{\"externalGroups.0\": \"cn=test_org,ou=people,o=springsource,o=org\"}", acmeScopes);
-
-        factory.setExternalGroupMappingAuthorizationManager(externalAuthManager);
-        AuthorizationRequest authorizationRequest = factory.createAuthorizationRequest(parameters);
-        assertNull(((DefaultAuthorizationRequest) authorizationRequest).getAuthorizationParameters().get(
-                        "external_scopes"));
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(0, result.size());
     }
 
-    private class TestExternalAuthorizationManager implements ExternalGroupMappingAuthorizationManager {
+    @Test
+    public void testWildcardIntersect4() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer","space.*.admin"));
+        Set<String> requested = new HashSet<>(Arrays.asList("space.*.admin"));
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
 
-        private Map<String, Set<String>> desiredScopes = new HashMap<String, Set<String>>();
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(1, result.size());
+        assertTrue(result.contains("space.1.admin"));
+    }
 
-        public void defineScopesForAuthorities(String authorities, Set<String> scopes) {
-            desiredScopes.put(authorities, scopes);
-        }
+    @Test
+    public void testWildcardIntersect5() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer","space.*.admin", "space.3.operator"));
+        Set<String> requested = client;
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
 
-        @Override
-        public Set<String> findScopesFromAuthorities(String authorities) {
-            return desiredScopes.get(authorities);
-        }
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(4, result.size());
+        assertTrue(result.contains("space.1.admin"));
+        assertTrue(result.contains("space.3.operator"));
+        assertTrue(result.contains("space.1.developer"));
+        assertTrue(result.contains("space.2.developer"));
+    }
 
+    @Test
+    public void testWildcardIntersect6() throws Exception {
+        Set<String> client = new HashSet<>(Arrays.asList("space.*.developer,space.*.admin"));
+        Set<String> requested = new HashSet<>(Arrays.asList("space.*.admin"));
+        Set<String> user = new HashSet<>(Arrays.asList("space.1.developer","space.2.developer","space.1.admin","space.3.operator"));
+
+        Set<String> result = factory.intersectScopes(requested, client, user);
+        assertEquals(0, result.size());
     }
 
 }

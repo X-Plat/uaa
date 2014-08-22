@@ -13,13 +13,21 @@
 
 package org.cloudfoundry.identity.uaa.integration;
 
+import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.codec.binary.Base64;
+import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.springframework.http.HttpEntity;
@@ -48,15 +56,68 @@ public class RemoteAuthenticationEndpointTests {
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> response = authenticate(testAccounts.getUserName(), testAccounts.getPassword());
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("marissa", response.getBody().get("username"));
+        assertEquals(testAccounts.getUserName(), response.getBody().get("username"));
     }
 
     @Test
     public void remoteAuthenticationFailsWithIncorrectCredentials() throws Exception {
         @SuppressWarnings("rawtypes")
-        ResponseEntity<Map> response = authenticate("marissa", "wrong");
+        ResponseEntity<Map> response = authenticate(testAccounts.getUserName(), "wrong");
         assertFalse(HttpStatus.OK == response.getStatusCode());
-        assertFalse("marissa".equals(response.getBody().get("username")));
+        assertFalse(testAccounts.getUserName().equals(response.getBody().get("username")));
+    }
+
+    @Test
+    public void validateLdapOrKeystoneOrigin() throws Exception {
+        String profiles = System.getProperty("spring.profiles.active");
+        if (profiles!=null && profiles.contains("ldap")) {
+            validateOrigin("marissa3","ldap3",Origin.LDAP);
+        } else if (profiles!=null && profiles.contains("keystone")) {
+            validateOrigin("marissa2", "keystone", Origin.KEYSTONE);
+        } else {
+            validateOrigin(testAccounts.getUserName(), testAccounts.getPassword(), Origin.UAA);
+        }
+    }
+
+    public void validateOrigin(String username, String password, String origin) throws Exception {
+        ResponseEntity<Map> authResp = authenticate(username,password);
+        assertEquals(HttpStatus.OK, authResp.getStatusCode());
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("Authorization", "Bearer " + getScimReadBearerToken());
+        ResponseEntity<Map> response = serverRunning.getForObject("/Users" + "?attributes=id,userName,origin", Map.class, headers);
+        Map<String, Object> results = response.getBody();
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+
+        assertThat(((Integer) results.get("totalResults")), greaterThan(0));
+        List<Map<String, Object>> list = (List<Map<String, Object>>) results.get("resources");
+        boolean found = false;
+        for (Map<String, Object> user : list) {
+            assertThat(user, hasKey("id"));
+            assertThat(user, hasKey("userName"));
+            assertThat(user, hasKey(Origin.ORIGIN));
+            assertThat(user, not(hasKey("name")));
+            assertThat(user, not(hasKey("emails")));
+            if (user.get("userName").equals(username)) {
+                found = true;
+                assertEquals(origin, user.get(Origin.ORIGIN));
+            }
+        }
+        assertTrue(found);
+    }
+
+    private String getScimReadBearerToken() {
+        HttpHeaders accessTokenHeaders = new HttpHeaders();
+        String basicDigestHeaderValue = "Basic "
+            + new String(Base64.encodeBase64((testAccounts.getAdminClientId() + ":" + testAccounts.getAdminClientSecret()).getBytes()));
+        accessTokenHeaders.add("Authorization", basicDigestHeaderValue);
+
+        LinkedMultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+        params.add("grant_type", "client_credentials");
+        params.add("client_id", testAccounts.getAdminClientId());
+        params.add("scope", "scim.read");
+        ResponseEntity<Map> tokenResponse = serverRunning.postForMap(serverRunning.getAccessTokenUri(), params, accessTokenHeaders);
+        return (String) tokenResponse.getBody().get("access_token");
     }
 
     @SuppressWarnings("rawtypes")

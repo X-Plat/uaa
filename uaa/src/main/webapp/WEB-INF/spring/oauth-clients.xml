@@ -13,7 +13,7 @@
 
 -->
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.springframework.org/schema/beans"
-    xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.2.xsd">
+    xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd">
 
     <bean id="jdbcClientDetailsService" class="org.springframework.security.oauth2.provider.JdbcClientDetailsService">
         <constructor-arg ref="dataSource" />
@@ -36,7 +36,7 @@
         <property name="defaultOverride" value="${oauth.client.override:true}" />
         <property name="clients" value="#{@config['oauth']==null ? null : @config['oauth']['clients']}" />
         <property name="autoApproveClients"
-            value="#{@applicationProperties.containsKey('oauth.client.autoapprove')?@config['oauth']['client']['autoapprove']:'vmc'}" />
+            value="#{@applicationProperties.containsKey('oauth.client.autoapprove')?@config['oauth']['client']['autoapprove']:'cf'}" />
     </bean>
 
     <beans profile="cloud">
@@ -62,9 +62,9 @@
                             <entry key="secret" value="adminsecret" />
                         </map>
                     </entry>
-                    <entry key="vmc">
+                    <entry key="cf">
                         <map>
-                            <entry key="id" value="vmc" />
+                            <entry key="id" value="cf" />
                             <entry key="authorized-grant-types" value="implicit,password,refresh_token" />
                             <entry key="scope"
                                 value="cloud_controller.read,cloud_controller.write,openid,password.write,scim.userids,cloud_controller.admin,scim.read,scim.write" />
@@ -95,6 +95,7 @@
                                     <value>openid</value>
                                 </list>
                             </entry>
+                            <entry key="signup_redirect_url" value="http://localhost:8080/app/" />
                         </map>
                     </entry>
                     <entry key="login">

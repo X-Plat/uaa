@@ -22,6 +22,70 @@ Rather than trigger arguments about how RESTful these APIs are we'll just refer 
 .. _OpenID Connect: http://openid.net/openid-connect
 .. _SCIM: http://simplecloud.info
 
+A Note on Filtering
+=======================
+In several of the API calls, especially around the SCIM endpoints, ``/Users`` and ``/Groups``
+there is an option to specify filters. These filters are implemented in accordance with
+a SCIM specification [on resource queries](http://www.simplecloud.info/specs/draft-scim-api-01.html#query-resources).
+
+Filtering supports
+
+Attribute operators
+
+  * eq - equalsIgnoreCase
+  * co - contains - in SQL becomes 'like %value%', case insensitive
+  * sw - starts with - in SQL becomes 'like value%', case insensitive
+  * pr - present - in SQL becomes 'IS NOT NULL'
+  * gt - greater than - ``>``
+  * ge - greater or equal than - ``>=``
+  * lt - less than - ``<``
+  * le - less or equals than - ``<=``
+
+Logical operators
+
+  * and - logical and
+  * or - logical or
+
+Grouping operators
+
+  * Group expressions in parenthesis ``(`` expression ``)`` to set precedence for operators
+
+There are four different data types
+
+* string literals - values must always be enclosed in double quotes ``"``, and double quotes must be JSON escaped
+  (with a slash ``\``)
+* date times - values must always be enclosed in double quotes, format is ``yyyy-MM-dd'T'HH:mm:ss.SSS'Z'``
+* boolean - values must be either ``true`` or ``false`` and not enclosed in quotes
+* numerical - values are not enclosed in quotes, and can contain numbers and a dot for decimal delimitation
+
+For complete information on filters and pagination, please review the [specification](http://www.simplecloud.info/specs/draft-scim-api-01.html#query-resources)
+
+User column names
+-------------------
+The following column names can be used for querying a user
+
+* id - string, UUID of the user
+* username - string
+* email or emails.value - string
+* givenname - string
+* familyname - string
+* active - boolean
+* phonenumber - string
+* verified - boolean
+* origin - string
+* external_id - string
+* created or meta.created - date
+* lastmodified or meta.lastmodified - date
+* version or meta.version - number
+
+The following column names can be used for querying a group
+
+* id - string, UUID of the group
+* displayname - string
+* created or meta.created - date
+* lastmodified or meta.lastmodified - date
+* version or meta.version - number
+
 Configuration Options
 =======================
 
@@ -40,7 +104,7 @@ Authentication and Delegated Authorization APIs
 
 This section deals with machine interactions, not with browsers, although some of them may have browsable content for authenticated users.  All machine requests have accept headers indicating JSON (or a derived media type perhaps).
 
-The ``/userinfo``, ``/check_id``, and ``/token`` endpoints are specified in the `OpenID Connect`_ and OAuth2_ standards and should be used by web applications on a cloud foundry instance such as micro, www, support, but will not be used by flows from vmc.
+The ``/userinfo``, ``/check_id``, and ``/token`` endpoints are specified in the `OpenID Connect`_ and OAuth2_ standards and should be used by web applications on a cloud foundry instance such as micro, www, support, but will not be used by flows from cf.
 
 A Note on OAuth Scope
 -----------------------
@@ -69,7 +133,7 @@ Browser Requests Code: ``GET /oauth/authorize``
   * ``response_type=code``
   * ``client_id=www``
   * ``scope=read write password``
-  * ``redirect_uri`` is optional because it can be pre-registered
+  * ``redirect_uri`` is optional if a redirect_uri has already been pre-registered for the client www
 
 * Request Header:
 
@@ -83,6 +147,17 @@ Browser Requests Code: ``GET /oauth/authorize``
 * Response Codes::
 
         302 - Found
+
+*Sample uaac command for this flow*
+
+* ``uaac -t token authcode get -c app -s appclientsecret``
+
+*Sample curl commands for this flow*
+
+* ``curl -v "http://localhost:8080/uaa/oauth/authorize?response_type=code&client_id=app&scope=password.write&redirect_uri=http%3A%2F%2Fwww.example.com%2Fcallback" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v http://localhost:8080/uaa/login.do -d "username=marissa&password=koala" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v "http://localhost:8080/uaa/oauth/authorize?response_type=code&client_id=app&scope=password.write&redirect_uri=http%3A%2F%2Fwww.example.com%2Fcallback" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v http://localhost:8080/uaa/oauth/authorize -d "scope.0=scope.password.write&user_oauth_approval=true" --cookie cookies.txt --cookie-jar cookies.txt``
 
 Non-Browser Requests Code: ``GET /oauth/authorize``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -114,6 +189,13 @@ The most useful information for constructing a user approval page is
 the list of requested scopes, the client id and the requested redirect
 URI.
 
+*Sample curl commands for this flow*
+
+* ``curl -v -H "Accept:application/json" "http://localhost:8080/uaa/oauth/authorize?response_type=code&client_id=app&scope=password.write&redirect_uri=http%3A%2F%2Fwww.example.com%2Fcallback" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v -H "Accept:application/json" http://localhost:8080/uaa/login.do -d "username=marissa&password=koala" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v -H "Accept:application/json" "http://localhost:8080/uaa/oauth/authorize?response_type=code&client_id=app&scope=password.write&redirect_uri=http%3A%2F%2Fwww.example.com%2Fcallback" --cookie cookies.txt --cookie-jar cookies.txt``
+* ``curl -v -H "Accept:application/json" http://localhost:8080/uaa/oauth/authorize -d "scope.0=scope.password.write&user_oauth_approval=true" --cookie cookies.txt --cookie-jar cookies.txt``
+
 Client Obtains Token: ``POST /oauth/token``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -141,7 +223,7 @@ Implicit Grant with Credentials: ``POST /oauth/authorize``
 
 An OAuth2_ defined endpoint to provide various tokens and authorization codes.
 
-For the ``vmc`` flows, we use the OAuth2 Implicit grant type (to avoid a second round trip to ``/token`` and so vmc does not need to securely store a client secret or user refresh tokens). The authentication method for the user is undefined by OAuth2 but a POST to this endpoint is acceptable, although a GET must also be supported (see `OAuth2 section 3.1`_).
+For the ``cf`` flows, we use the OAuth2 Implicit grant type (to avoid a second round trip to ``/token`` and so cf does not need to securely store a client secret or user refresh tokens). The authentication method for the user is undefined by OAuth2 but a POST to this endpoint is acceptable, although a GET must also be supported (see `OAuth2 section 3.1`_).
 
 .. _OAuth2 section 3.1: http://tools.ietf.org/id/draft-ietf-oauth-v2-26.html#rfc.section.3.1
 
@@ -155,9 +237,9 @@ All requests to this endpoint MUST be over SSL.
 * Request query component: some parameters specified by the spec, appended to the query component using the "application/x-www-form-urlencoded" format,
 
   * ``response_type=token``
-  * ``client_id=vmc``
+  * ``client_id=cf``
   * ``scope=read write``
-  * ``redirect_uri`` - optional because it can be pre-registered, but a dummy is still needed where vmc is concerned (it doesn't redirect) and must be pre-registered, see `Client Registration Administration APIs`_.
+  * ``redirect_uri`` - optional because it can be pre-registered, but a dummy is still needed where cf is concerned (it doesn't redirect) and must be pre-registered, see `Client Registration Administration APIs`_.
 
 * Request body: contains the required information in JSON as returned from the `login information API`_, e.g. username/password for internal authentication, or for LDAP, and others as needed for other authentication types. For example::
 
@@ -185,7 +267,7 @@ This works similarly to the previous section, but does not require the credentia
 Trusted Authentication from Login Server
 ----------------------------------------
 
-In addition to the normal authentication of the ``/oauth/authorize`` endpoint described above (cookie-based for browser app and special case for ``vmc``) the UAA offers a special channel whereby a trusted client app can authenticate itself and then use the ``/oauth/authorize`` endpoint by providing minimal information about the user account (but not the password).  This channel is provided so that authentication can be abstracted into a separate "Login" server.  The default client id for the trusted app is ``login``, and this client is registered in the default profile (but not in any other)::
+In addition to the normal authentication of the ``/oauth/authorize`` endpoint described above (cookie-based for browser app and special case for ``cf``) the UAA offers a special channel whereby a trusted client app can authenticate itself and then use the ``/oauth/authorize`` endpoint by providing minimal information about the user account (but not the password).  This channel is provided so that authentication can be abstracted into a separate "Login" server.  The default client id for the trusted app is ``login``, and this client is registered in the default profile (but not in any other)::
 
     id: login,
     secret: loginsecret,
@@ -303,7 +385,7 @@ This endpoint mirrors the OpenID Connect ``/check_id`` endpoint, so not very RES
             "exp":138943173,
             "user_id":"41750ae1-b2d0-4304-b1fe-7bdc24256387",
             "user_name":"marissa",
-            "client_id":"vmc"
+            "client_id":"cf"
         }
 
 Notes:
@@ -394,7 +476,7 @@ Response    ``{"user_id":"olds","email":"olds@vmare.com"}``
 Login Information API: ``GET /login``
 ---------------------------------------
 
-An endpoint which returns login information, e.g prompts for authorization codes or one-time passwords. This allows vmc to determine what login information it should collect from the user.
+An endpoint which returns login information, e.g prompts for authorization codes or one-time passwords. This allows cf to determine what login information it should collect from the user.
 
 This call will be unauthenticated.
 
@@ -694,7 +776,7 @@ Deleting accounts is handled in the back end logically using the `active` flag, 
 Converting UserIds to Names
 ---------------------------
 
-There is a SCIM-like endpoint for converting usernames to names, with the same filter and attribute syntax as ``/Users``. It must be supplied with a ``filter`` parameter.  It is a special purpose endpoint for use as a user id/name translation api, and is should be disabled in production sites by setting ``scim.userids_enabled=false`` in the UAA configuration. It will be used by vmc so it has to be quite restricted in function (i.e. it's not a general purpose groups or users endpoint). Otherwise the API is the same as /Users.
+There is a SCIM-like endpoint for converting usernames to names, with the same filter and attribute syntax as ``/Users``. It must be supplied with a ``filter`` parameter.  It is a special purpose endpoint for use as a user id/name translation api, and is should be disabled in production sites by setting ``scim.userids_enabled=false`` in the UAA configuration. It will be used by cf so it has to be quite restricted in function (i.e. it's not a general purpose groups or users endpoint). Otherwise the API is the same as /Users.
 
 * Request: ``GET /ids/Users``
 * Response Body: list of users matching the filter
@@ -735,14 +817,14 @@ In addition to SCIM users, UAA also supports/implements SCIM_groups_ for managin
 
 .. _SCIM_groups: http://tools.ietf.org/html/draft-ietf-scim-core-schema-00#section-8
 
-Create a Group: ``POST /Group``
+Create a Group: ``POST /Groups``
 ----------------------------------
 
 See `SCIM - Creating Resources`__
 
 __ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
 
-* Request: ``POST /Group``
+* Request: ``POST /Groups``
 * Request Headers: Authorization header containing an OAuth2_ bearer token with::
 
         scope = scim.write
@@ -764,7 +846,7 @@ The ``displayName`` is unique in the UAA, but is allowed to change.  Each group 
 
         HTTP/1.1 201 Created
         Content-Type: application/json
-        Location: https://example.com/v1/Group/uid=123456
+        Location: https://example.com/v1/Groups/uid=123456
         ETag: "0"
 
         {
@@ -789,12 +871,12 @@ The ``displayName`` is unique in the UAA, but is allowed to change.  Each group 
 
 The members.value sub-attributes MUST refer to a valid SCIM resource id in the UAA, i.e the UUID of an existing SCIM user or group.
 
-Update a Group: ``PUT /Group/{id}``
+Update a Group: ``PUT /Groups/{id}``
 ----------------------------------------
 
 See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#edit-resource-with-put>`_
 
-* Request: ``PUT /Group/{id}``
+* Request: ``PUT /Groups/{id}``
 * Request Headers: 
 
   + Authorization header containing an OAuth2_ bearer token with::
@@ -882,12 +964,12 @@ Filters: note that, per the specification, attribute values are comma separated 
         400 - Bad Request
         401 - Unauthorized
 
-Delete a Group: ``DELETE /Group/{id}``
+Delete a Group: ``DELETE /Groups/{id}``
 -----------------------------------------
 
 See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#delete-resource>`_.
 
-* Request: ``DELETE /Group/{id}``
+* Request: ``DELETE /Groups/{id}``
 * Request Headers: 
 
   + Authorization header containing an OAuth2_ bearer token with::
@@ -907,67 +989,185 @@ See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-res
 
 Deleting a group also removes the group from the 'groups' sub-attribute on users who were members of the group. 
 
+
+List External Group mapping: ``GET /Groups/External/list``
+----------------------------------
+
+Retrieves external group mappings in the form of a search result.
+
+* Request: ``GET /Groups/External/list``
+* Request Headers: Authorization header containing an OAuth2_ bearer token with::
+
+        scope = scim.read
+        aud = scim
+
+* Request(Query) Parameters::
+
+        startIndex - the start index of the pagination, default value is 1
+        count - the number of results to retrieve, default value is 100
+
+* Request Body::
+
+* Response Body::
+
+        HTTP/1.1 200 Ok
+        Content-Type: application/json
+
+        {"resources":
+          [
+            {"groupId":"79f37b92-21db-4a3e-a28c-ff93df476eca","displayName":"internal.write","externalGroup":"cn=operators,ou=scopes,dc=test,dc=com"},
+            {"groupId":"e66c720f-6f4b-4fb5-8b0a-37818045b5b7","displayName":"internal.superuser","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"},
+            {"groupId":"ef325dad-63eb-46e6-800b-796f254e13ee","displayName":"organizations.acme","externalGroup":"cn=test_org,ou=people,o=springsource,o=org"},
+            {"groupId":"f149154e-c131-4e84-98cf-05aa94cc6b4e","displayName":"internal.everything","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"},
+            {"groupId":"f2be2506-45e3-412e-9d85-6420d7e4afe4","displayName":"internal.read","externalGroup":"cn=developers,ou=scopes,dc=test,dc=com"}
+          ],
+          "startIndex":1,
+          "itemsPerPage":100,
+          "totalResults":5,
+          "schemas":["urn:scim:schemas:core:1.0"]
+        }
+
+
+        * Response Codes::
+
+        200 - Results retrieved successfully
+        401 - Unauthorized
+        403 - Forbidden - valid token but not enough privileges or invalid method
+
+Create a Group mapping: ``POST /Groups/External``
+----------------------------------
+
+Creates a group mapping with an internal UAA groups (scope) and an external group, for example LDAP DN.
+
+* Request: ``POST /Groups/External``
+* Request Headers: Authorization header containing an OAuth2_ bearer token with::
+
+        scope = scim.write
+        aud = scim
+
+* Request Body(using group name)::
+
+        {
+          "schemas":["urn:scim:schemas:core:1.0"],
+          "displayName":"uaa.admin",
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+        }
+
+* Request Body(using group ID)::
+
+        {
+          "schemas":["urn:scim:schemas:core:1.0"],
+          "groupId":"f2be2506-45e3-412e-9d85-6420d7e4afe3",
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+        }
+
+The ``displayName`` is unique in the UAA, but is allowed to change.  Each group also has a fixed primary key which is a UUID (stored in the ``id`` field of the core schema).
+It is possible to substitute the ``displayName`` field with a ``groupId`` field containing the UUID.
+
+* Response Body::
+
+        HTTP/1.1 201 Created
+        Content-Type: application/json
+        Location: https://example.com/v1/Groups/uid=123456
+        ETag: "0"
+
+        {
+          "schemas":["urn:scim:schemas:core:1.0"],
+          "id":"123456",
+          "meta":{
+            "version":0,
+            "created":"2011-08-01T21:32:44.882Z",
+            "lastModified":"2011-08-01T21:32:44.882Z"
+          },
+          "displayName":"uaa.admin",
+          "groupId":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f",
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+        }
+
+* Response Codes::
+
+        201 - Created successfully
+        400 - Bad Request (unparseable, syntactically incorrect etc)
+        401 - Unauthorized
+
+Remove a Group mapping: ``DELETE /Groups/External/id/{groupId}/{externalGroup}``
+----------------------------------
+
+Removes the group mapping between an internal UAA groups (scope) and an external group, for example LDAP DN.
+
+* Request: ``DELETE /Groups/External/id/3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f/cn=superusers,ou=scopes,dc=test,dc=com``
+* Request Headers: Authorization header containing an OAuth2_ bearer token with::
+
+        scope = scim.write
+        aud = scim
+
+* Response Body::
+
+        HTTP/1.1 200 Ok
+        Content-Type: application/json
+        Location: https://example.com/v1/Groups/uid=123456
+        ETag: "0"
+
+        {
+          "schemas":["urn:scim:schemas:core:1.0"],
+          "id":"123456",
+          "meta":{
+            "version":0,
+            "created":"2011-08-01T21:32:44.882Z",
+            "lastModified":"2011-08-01T21:32:44.882Z"
+          },
+          "displayName":"uaa.admin",
+          "groupId":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f",
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+        }
+
+* Response Codes::
+
+        200 - Deleted successfully
+        400 - Bad Request (unparseable, syntactically incorrect etc)
+        401 - Unauthorized
+
+Remove a Group mapping: ``DELETE /Groups/External/{displayName}/{externalGroup}``
+----------------------------------
+
+Removes the group mapping between an internal UAA groups (scope) and an external group, for example LDAP DN.
+
+* Request: ``DELETE /Groups/External/internal.everything/cn=superusers,ou=scopes,dc=test,dc=com``
+* Request Headers: Authorization header containing an OAuth2_ bearer token with::
+
+        scope = scim.write
+        aud = scim
+
+* Response Body::
+
+        HTTP/1.1 200 Ok
+        Content-Type: application/json
+        Location: https://example.com/v1/Groups/uid=123456
+        ETag: "0"
+
+        {
+          "schemas":["urn:scim:schemas:core:1.0"],
+          "id":"123456",
+          "meta":{
+            "version":0,
+            "created":"2011-08-01T21:32:44.882Z",
+            "lastModified":"2011-08-01T21:32:44.882Z"
+          },
+          "displayName":"internal.everything",
+          "groupId":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f",
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+        }
+
+* Response Codes::
+
+        200 - Deleted successfully
+        400 - Bad Request (unparseable, syntactically incorrect etc)
+        401 - Unauthorized
+
 Access Token Administration APIs
 =================================
 
 OAuth2 protected resources which deal with listing and revoking access tokens.  To revoke a token with ``DELETE`` clients need to provide a ``jti`` (token identifier, not the token value) which can be obtained from the token list via the corresponding ``GET``.  This is to prevent token values from being logged in the server (``DELETE`` does not have a body).
-
-List Tokens for User: ``GET /oauth/users/{username}/tokens``
--------------------------------------------------------------
-
-* Request: ``GET /oauth/users/{username}/tokens``
-* Request body: *empty*
-* Response body: a list of access tokens, *example* ::
-
-        HTTP/1.1 200 OK
-        Content-Type: text/plain
-
-        [
-          {
-            "access_token": "FYSDKJHfgdUydsFJSHDFKAJHDSF",
-            "jti": "fkjhsdfgksafhdjg",
-            "expires_in": 1234,
-            "client_id": "vmc"
-          }
-        ]
-
-Revoke Token by User: ``DELETE /oauth/users/{username}/tokens/{jti}``
-----------------------------------------------------------------------------
-
-* Request: ``DELETE /oauth/users/{username}/tokens/{jti}``
-* Request body: *empty*
-* Response code: ``200 OK``
-* Response body: a status message (hash)
-
-List Tokens for Client: ``GET /oauth/clients/{client_id}/tokens``
----------------------------------------------------------------------
-
-* Request: ``GET /oauth/clients/{client_id}/tokens``
-* Request body: *empty*
-* Response body: a list of access tokens, *example* ::
-
-        HTTP/1.1 200 OK
-        Content-Type: text/plain
-
-        [
-          {
-            "access_token": "KJHDGFKDHSJFUYTGUYGHBKAJHDSF",
-            "jti": "fkjhsdfgksafhdjg",
-            "expires_in": 1234,
-            "client_id": "www"
-          }
-        ]
-
-Revoke Token by Client: ``DELETE /oauth/clients/{client_id}/tokens/{jti}``
---------------------------------------------------------------------------------
-
-* Request: ``DELETE /oauth/clients/{client_id}/tokens/{jti}``
-* Request body: *empty*
-* Reponse code: ``200`` OK
-* Response body: a status message (hash) ::
-
-        HTTP/1.1 200 OK
-        { "status": "ok" }
 
 Get the Token Signing Key: ``GET /token_key``
 -----------------------------------------------
@@ -1197,7 +1397,7 @@ N.B. the secret will not be changed, even if it is included in the
 request body (use the secret change endpoint instead).
 
 Register, update or delete Multiple Clients: ``POST /oauth/clients/tx/modify``
--------------------------------------------------------
+------------------------------------------------------------------------------
 
 ==============  ===============================================
 Request         ``POST /oauth/clients/tx/modify``
@@ -1282,7 +1482,7 @@ Example::
 
 
 Delete Multiple Clients: ``POST /oauth/clients/tx/delete``
--------------------------------------------------------
+----------------------------------------------------------
 
 ==============  ===============================================
 Request         ``POST /oauth/clients/tx/delete``

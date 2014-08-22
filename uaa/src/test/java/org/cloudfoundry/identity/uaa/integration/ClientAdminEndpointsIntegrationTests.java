@@ -80,9 +80,9 @@ public class ClientAdminEndpointsIntegrationTests {
     @Test
     public void testGetClient() throws Exception {
         HttpHeaders headers = getAuthenticatedHeaders(getClientCredentialsAccessToken("clients.read"));
-        ResponseEntity<String> result = serverRunning.getForString("/oauth/clients/vmc", headers);
+        ResponseEntity<String> result = serverRunning.getForString("/oauth/clients/cf", headers);
         assertEquals(HttpStatus.OK, result.getStatusCode());
-        assertTrue(result.getBody().contains("vmc"));
+        assertTrue(result.getBody().contains("cf"));
     }
 
     @Test
@@ -91,7 +91,7 @@ public class ClientAdminEndpointsIntegrationTests {
         ResponseEntity<String> result = serverRunning.getForString("/oauth/clients", headers);
         assertEquals(HttpStatus.OK, result.getStatusCode());
         // System.err.println(result.getBody());
-        assertTrue(result.getBody().contains("\"client_id\":\"vmc\""));
+        assertTrue(result.getBody().contains("\"client_id\":\"cf\""));
         assertFalse(result.getBody().contains("secret\":"));
     }
 
@@ -516,7 +516,7 @@ public class ClientAdminEndpointsIntegrationTests {
     }
 
     private Approval[] getApprovals(String token, String clientId) throws Exception {
-        String filter = "clientId eq '"+clientId+"'";
+        String filter = "client_id eq \""+clientId+"\"";
         HttpHeaders headers = getAuthenticatedHeaders(token);
 
         ResponseEntity<Approval[]> approvals =
@@ -534,9 +534,9 @@ public class ClientAdminEndpointsIntegrationTests {
         Date oneMinuteAgo = new Date(System.currentTimeMillis() - 60000);
         Date expiresAt = new Date(System.currentTimeMillis() + 60000);
         Approval[] approvals = new Approval[] {
-            new Approval(testAccounts.getUserName(), clientId, "cloud_controller.read", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo),
-            new Approval(testAccounts.getUserName(), clientId, "openid", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo),
-            new Approval(testAccounts.getUserName(), clientId, "password.write", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo)
+            new Approval(null, clientId, "cloud_controller.read", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo),
+            new Approval(null, clientId, "openid", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo),
+            new Approval(null, clientId, "password.write", expiresAt, Approval.ApprovalStatus.APPROVED,oneMinuteAgo)
         };
 
         HttpHeaders headers = getAuthenticatedHeaders(token);

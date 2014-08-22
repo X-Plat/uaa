@@ -25,6 +25,8 @@ import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.cloudfoundry.identity.uaa.rest.jdbc.AbstractQueryable;
+import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
 import org.cloudfoundry.identity.uaa.scim.ScimGroup;
 import org.cloudfoundry.identity.uaa.scim.ScimGroupMember;
 import org.cloudfoundry.identity.uaa.scim.ScimGroupMembershipManager;
@@ -44,17 +46,17 @@ import org.springframework.jdbc.core.SingleColumnRowMapper;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
-public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManager {
+public class JdbcScimGroupMembershipManager extends AbstractQueryable<ScimGroupMember> implements ScimGroupMembershipManager {
 
     private JdbcTemplate jdbcTemplate;
 
     private final Log logger = LogFactory.getLog(getClass());
 
-    public static final String MEMBERSHIP_FIELDS = "group_id,member_id,member_type,authorities,added";
+    public static final String MEMBERSHIP_FIELDS = "group_id,member_id,member_type,authorities,added,origin";
 
     public static final String MEMBERSHIP_TABLE = "group_membership";
 
-    public static final String ADD_MEMBER_SQL = String.format("insert into %s ( %s ) values (?,?,?,?,?)",
+    public static final String ADD_MEMBER_SQL = String.format("insert into %s ( %s ) values (?,?,?,?,?,?)",
                     MEMBERSHIP_TABLE, MEMBERSHIP_FIELDS);
 
     public static final String UPDATE_MEMBER_SQL = String.format(
@@ -92,7 +94,7 @@ public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManage
 
     public void setDefaultUserGroups(Set<String> groupNames) {
         for (String name : groupNames) {
-            List<ScimGroup> g = groupProvisioning.query(String.format("displayName co '%s'", name));
+            List<ScimGroup> g = groupProvisioning.query(String.format("displayName co \"%s\"", name));
             if (!g.isEmpty()) {
                 defaultUserGroups.add(g.get(0));
             } else { // default group must exist, hence if not already present,
@@ -110,9 +112,22 @@ public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManage
         this.groupProvisioning = groupProvisioning;
     }
 
-    public JdbcScimGroupMembershipManager(JdbcTemplate jdbcTemplate) {
+
+
+    public JdbcScimGroupMembershipManager(JdbcTemplate jdbcTemplate, JdbcPagingListFactory pagingListFactory) {
+        super(jdbcTemplate,pagingListFactory,new ScimGroupMemberRowMapper());
         Assert.notNull(jdbcTemplate);
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    protected String getBaseSqlQuery() {
+        return GET_MEMBERS_SQL;
+    }
+
+    @Override
+    protected String getTableName() {
+        return MEMBERSHIP_TABLE;
     }
 
     @Override
@@ -131,6 +146,7 @@ public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManage
                     ps.setString(3, type);
                     ps.setString(4, authorities);
                     ps.setTimestamp(5, new Timestamp(new Date().getTime()));
+                    ps.setString(6, member.getOrigin());
                 }
             });
         } catch (DuplicateKeyException e) {
@@ -374,8 +390,11 @@ public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManage
             String memberId = rs.getString(2);
             String memberType = rs.getString(3);
             String authorities = rs.getString(4);
-
-            return new ScimGroupMember(memberId, ScimGroupMember.Type.valueOf(memberType), getAuthorities(authorities));
+            Date added = rs.getDate(5);
+            String origin = rs.getString(6);
+            ScimGroupMember sgm = new ScimGroupMember(memberId, ScimGroupMember.Type.valueOf(memberType), getAuthorities(authorities));
+            sgm.setOrigin(origin);
+            return sgm;
         }
 
         private List<ScimGroupMember.Role> getAuthorities(String authorities) {

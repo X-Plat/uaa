@@ -13,7 +13,7 @@
 
 package org.cloudfoundry.identity.uaa.scim.endpoints;
 
-import static org.junit.internal.matchers.StringContains.containsString;
+import static org.hamcrest.CoreMatchers.containsString;
 
 import java.util.Collection;
 
@@ -63,7 +63,7 @@ public class UserIdConversionEndpointsTests {
     public void testBadFieldInFilter() {
         expected.expect(ScimException.class);
         expected.expectMessage(containsString("Invalid filter"));
-        endpoints.findUsers("emails.value eq 'foo@bar.org'", "ascending", 0, 100);
+        endpoints.findUsers("emails.value eq \"foo@bar.org\"", "ascending", 0, 100);
     }
 
     @Test
