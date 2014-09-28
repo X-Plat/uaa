@@ -85,55 +85,61 @@ discover_msg = { :type => 'UAA',
   :uuid => "0-#{config["varz"]["uuid"]}"
 }
 
-begin 
-  EM.run do
-    max_wait = 30
-    uaa_is_up = false
-    start_time = Time.now
-    logger.info("RUBY UAA: Waiting for uaa to start within #{max_wait} seconds")
-    begin
-      response = RestClient.get "#{discover_msg[:host]}/login", accept: "application/json",
-          open_timeout: 2, timeout: 2
-      uaa_is_up = response.code == 200 && response.body =~ /prompts/
-    rescue Exception => e
-      logger.info "RUBY UAA: waiting for uaa to start: #{e}"
-      sleep 2
-    end while !uaa_is_up && Time.now - start_time < max_wait
-  
-    # NATS will block and we want to wait for the tomcat process so this
-    # has to go in a new thread
-  
-    logger.info("RUBY UAA: UAA started, registering with NATS")
-    
-    mbus = config["mbus"] || "nats://localhost:4222/"
-  
-    message_bus = CfMessageBus::MessageBus.new({:uri => mbus, :logger => logger})
-    VCAP::Component.register(
-      :type => 'UAA',
-      :host => config["uaa"]["host"]||"127.0.0.1",
-      :index => config["index"]||0,
-      :config => config,
-      :nats => message_bus,
-      :logger => logger
-    )
-  
-    registrar = Cf::Registrar.new(
-      :mbus => mbus,
-      :host => config["uaa"]["host"]||"127.0.0.1",
-      :port => config["uaa"]["port"]||8080,
-      :uri => config["uaa"]["uris"]||["uaa.vcap.me","login.vcap.me"],
-      :tags => { :component => "UAA" },
-      :index => config["index"]||0
-    )
-    registrar.register_with_router 
-    logger.info "RUBY UAA: UAA registered."
-  
-    EM.defer do
-      Process.wait(pid)
-      Process.exit true
+EM.run do
+  max_wait = 30
+  uaa_is_up = false
+  start_time = Time.now
+  logger.info("RUBY UAA: Waiting for uaa to start within #{max_wait} seconds")
+  begin
+    response = RestClient.get "#{discover_msg[:host]}/login", accept: "application/json",
+        open_timeout: 2, timeout: 2
+    uaa_is_up = response.code == 200 && response.body =~ /prompts/
+  rescue Exception => e
+    logger.info "RUBY UAA: waiting for uaa to start: #{e}"
+    sleep 2
+  end while !uaa_is_up && Time.now - start_time < max_wait
+
+  # NATS will block and we want to wait for the tomcat process so this
+  # has to go in a new thread
+
+  logger.info("RUBY UAA: UAA started, registering with NATS")
+
+  retries = nil
+  ::NATS.on_error do |e|
+    retries ||= 5
+    logger.warn("RUBY UAA: NATS connect failed, reconnecting...")
+    if ((retries -= 1) < 0)
+      logger.warn("RUBY UAA: retries no more. QUIT.") 
+      raise "NATS error. #{e}"
     end
-  end #end_of_em
-rescue => e
-  logger.warn "RUBY UAA: Nats Failed. #{e.inspect}\n Reconnecting."
-  retry
-end #end_of_rescue
+    logger.warn("RUBY UAA: retries #{retries} left")
+  end  
+  
+  mbus = config["mbus"] || "nats://localhost:4222/"
+
+  message_bus = CfMessageBus::MessageBus.new({:uri => mbus, :logger => logger})
+  VCAP::Component.register(
+    :type => 'UAA',
+    :host => config["uaa"]["host"]||"127.0.0.1",
+    :index => config["index"]||0,
+    :config => config,
+    :nats => message_bus,
+    :logger => logger
+  )
+
+  registrar = Cf::Registrar.new(
+    :mbus => mbus,
+    :host => config["uaa"]["host"]||"127.0.0.1",
+    :port => config["uaa"]["port"]||8080,
+    :uri => config["uaa"]["uris"]||["uaa.vcap.me","login.vcap.me"],
+    :tags => { :component => "UAA" },
+    :index => config["index"]||0
+  )
+  registrar.register_with_router 
+  logger.info "RUBY UAA: UAA registered."
+
+  EM.defer do
+    Process.wait(pid)
+    Process.exit true
+  end
+end #end_of_em
