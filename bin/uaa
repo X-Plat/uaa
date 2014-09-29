@@ -28,20 +28,20 @@ logger = VCAP::Logging.logger('uaa')
 
 root=File.absolute_path(File.join(File.dirname(__FILE__), ".."))
 if File.exist?(root) then
-  logger.info("Using root=#{root}")
+  logger.info("RUBY UAA: Using root=#{root}")
 else
   abort("#{root} is not a directory.  Do you need to init submodules?")
 end
 
 cfg_path = ENV['CLOUD_FOUNDRY_CONFIG_PATH'] ? ENV['CLOUD_FOUNDRY_CONFIG_PATH'] : File.join(root, "config")
 
-logger.info("Config path: #{cfg_path}")
+logger.info("RUBY UAA: Config path: #{cfg_path}")
 
 cfg_file = File.join(cfg_path, "uaa.yml")
 
 config = {"uaa"=>{}, "varz"=>{}}
 File.exist?(cfg_file) && File.open(cfg_file) do |f|
-  logger.info("Loading config file from #{cfg_file}")
+  logger.info("RUBY UAA: Loading config file from #{cfg_file}")
   config.update(YAML.load(f))
 end
 config["varz"]["username"] ||= VCAP.secure_uuid
@@ -49,16 +49,16 @@ config["varz"]["password"] ||= VCAP.secure_uuid
 config["varz"]["uuid"] ||= VCAP.secure_uuid
 
 
-logger.info("BEGIN REGISTRAR")
+logger.info("RUBY UAA: BEGIN REGISTRAR")
 mbus = config["mbus"] || "nats://localhost:4222/"
-logger.info("Launching tomcat from PID=#{Process.pid}")
+logger.info("RUBY UAA: Launching tomcat from PID=#{Process.pid}")
 
 pre_installed_tomcat = ENV['UAA_TOMCAT']
 jre_opts = "-DPID=$$"
 config["jvm_args"] && jre_opts += " " + config["jvm_args"]
 config["spring_profiles"] && jre_opts += " -Dspring.profiles.active=" + config["spring_profiles"]
 jre_opts += """ -Dvarz.username=#{config["varz"]["username"]} -Dvarz.password=#{config["varz"]["password"]}"""
-logger.info("Tomcat JVM args: #{jre_opts}")
+logger.info("RUBY UAA: Tomcat JVM args: #{jre_opts}")
 
 # The form of this next bit is very sensitive.  We need the PID for
 # logging so we need to exec from the shell to stay in the same
@@ -67,7 +67,7 @@ pid = spawn("export MAVEN_OPTS=\"#{jre_opts}\" && exec mvn tomcat:run -P vcap", 
 pid = spawn("export JAVA_OPTS=\"#{jre_opts}\" && exec #{pre_installed_tomcat}/bin/catalina.sh run", {:chdir=>root}) if pre_installed_tomcat
 
 
-logger.info("Tomcat PID = #{pid}")
+logger.info("RUBY UAA: Tomcat PID = #{pid}")
 
 pidfile = config["pid"]
 if !pidfile then
@@ -76,7 +76,7 @@ if !pidfile then
 end
 File.open(pidfile, 'w') {|f| f.write(pid) }
 
-logger.info("Preparing to launch NATS from #{pid}")
+logger.info("RUBY UAA: Preparing to launch NATS from #{pid}")
 
 discover_msg = { :type => 'UAA',
   :host => "%s:%s" % [config["uaa"]["host"]||"localhost",  config["uaa"]["port"]||8080],
@@ -89,20 +89,31 @@ EM.run do
   max_wait = 30
   uaa_is_up = false
   start_time = Time.now
-  logger.info("Waiting for uaa to start within #{max_wait} seconds")
+  logger.info("RUBY UAA: Waiting for uaa to start within #{max_wait} seconds")
   begin
     response = RestClient.get "#{discover_msg[:host]}/login", accept: "application/json",
         open_timeout: 2, timeout: 2
     uaa_is_up = response.code == 200 && response.body =~ /prompts/
   rescue Exception => e
-    logger.info "waiting for uaa to start: #{e}"
+    logger.info "RUBY UAA: waiting for uaa to start: #{e}"
     sleep 2
   end while !uaa_is_up && Time.now - start_time < max_wait
 
   # NATS will block and we want to wait for the tomcat process so this
   # has to go in a new thread
 
-  logger.info("UAA started, registering with NATS")
+  logger.info("RUBY UAA: UAA started, registering with NATS")
+
+  retries = nil
+  ::NATS.on_error do |e|
+    retries ||= 5
+    logger.warn("RUBY UAA: NATS connect failed, reconnecting...")
+    if ((retries -= 1) < 0)
+      logger.warn("RUBY UAA: retries no more. QUIT.") 
+      raise "NATS error. #{e}"
+    end
+    logger.warn("RUBY UAA: retries #{retries} left")
+  end  
   
   mbus = config["mbus"] || "nats://localhost:4222/"
 
@@ -125,10 +136,10 @@ EM.run do
     :index => config["index"]||0
   )
   registrar.register_with_router 
-  logger.info "UAA registered."
+  logger.info "RUBY UAA: UAA registered."
 
   EM.defer do
     Process.wait(pid)
     Process.exit true
   end
-end
+end #end_of_em
