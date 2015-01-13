@@ -12,6 +12,22 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.mock.audit;
 
+import java.util.List;
+
+import static org.hamcrest.Matchers.containsString;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import com.googlecode.flyway.core.Flyway;
 import junit.framework.Assert;
 import org.apache.commons.codec.binary.Base64;
@@ -28,11 +44,10 @@ import org.cloudfoundry.identity.uaa.authentication.UaaAuthenticationDetails;
 import org.cloudfoundry.identity.uaa.authentication.event.ClientAuthenticationFailureEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.ClientAuthenticationSuccessEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.PrincipalAuthenticationFailureEvent;
+import org.cloudfoundry.identity.uaa.authentication.event.UnverifiedUserAuthenticationEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.UserAuthenticationFailureEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.UserAuthenticationSuccessEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.UserNotFoundEvent;
-import org.cloudfoundry.identity.uaa.config.YamlServletProfileInitializer;
-import org.cloudfoundry.identity.uaa.oauth.Claims;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval;
 import org.cloudfoundry.identity.uaa.password.event.PasswordChangeEvent;
 import org.cloudfoundry.identity.uaa.password.event.PasswordChangeFailureEvent;
@@ -42,12 +57,11 @@ import org.cloudfoundry.identity.uaa.scim.ScimGroupMember;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.endpoints.PasswordResetEndpoints;
 import org.cloudfoundry.identity.uaa.scim.event.ScimEventPublisher;
-import org.cloudfoundry.identity.uaa.test.DefaultIntegrationTestConfig;
 import org.cloudfoundry.identity.uaa.test.TestApplicationEventListener;
 import org.cloudfoundry.identity.uaa.test.TestClient;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
+import org.cloudfoundry.identity.uaa.test.YamlServletProfileInitializerContextInitializer;
 import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.type.TypeReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -55,64 +69,53 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.http.MediaType;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.jwt.Jwt;
-import org.springframework.security.jwt.JwtHelper;
-import org.springframework.security.oauth2.provider.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientRegistrationService;
+import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
+import org.springframework.web.context.support.XmlWebApplicationContext;
 import scala.actors.threadpool.Arrays;
-
-import java.util.List;
-import java.util.Map;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.atLeast;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 public class AuditCheckMvcMockTests {
 
-    AnnotationConfigWebApplicationContext webApplicationContext;
+    XmlWebApplicationContext webApplicationContext;
     ClientRegistrationService clientRegistrationService;
     private ApplicationListener<AbstractUaaEvent> listener;
     private MockMvc mockMvc;
     private TestClient testClient;
     private UaaTestAccounts testAccounts;
     private TestApplicationEventListener<AbstractUaaEvent> testListener;
+    private ApplicationListener<UserAuthenticationSuccessEvent> authSuccessListener;
 
     @Before
     public void setUp() throws Exception {
-        webApplicationContext = new AnnotationConfigWebApplicationContext();
+        MockEnvironment mockEnvironment = new MockEnvironment();
+
+        webApplicationContext = new XmlWebApplicationContext();
         webApplicationContext.setServletContext(new MockServletContext());
-        new YamlServletProfileInitializer().initialize(webApplicationContext);
-        webApplicationContext.register(DefaultIntegrationTestConfig.class);
+        webApplicationContext.setEnvironment(mockEnvironment);
+        new YamlServletProfileInitializerContextInitializer().initializeContext(webApplicationContext, "uaa.yml,login.yml");
+        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
         webApplicationContext.refresh();
-        webApplicationContext.registerShutdownHook();
         FilterChainProxy springSecurityFilterChain = webApplicationContext.getBean("springSecurityFilterChain", FilterChainProxy.class);
+
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .addFilter(springSecurityFilterChain)
+            .build();
+
         clientRegistrationService = (ClientRegistrationService)webApplicationContext.getBean("clientRegistrationService");
         listener = mock(new DefaultApplicationListener<AbstractUaaEvent>() {}.getClass());
+        authSuccessListener = mock(new DefaultApplicationListener<UserAuthenticationSuccessEvent>(){}.getClass());
         webApplicationContext.addApplicationListener(listener);
+        webApplicationContext.addApplicationListener(authSuccessListener);
         testListener = TestApplicationEventListener.forEventClass(AbstractUaaEvent.class);
         webApplicationContext.addApplicationListener(testListener);
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
-                .addFilter(springSecurityFilterChain)
-                .build();
 
         testClient = new TestClient(mockMvc);
         testAccounts = UaaTestAccounts.standard(null);
@@ -152,7 +155,8 @@ public class AuditCheckMvcMockTests {
 
         mockMvc.perform(loginPost)
             .andExpect(status().isOk())
-            .andExpect(content().string("{\"username\":\""+testAccounts.getUserName()+"\"}"));
+            .andExpect(content().string(containsString("\"username\":\"" + testAccounts.getUserName())))
+            .andExpect(content().string(containsString("\"email\":\"" + testAccounts.getEmail())));
 
         ArgumentCaptor<UserAuthenticationSuccessEvent> captor  = ArgumentCaptor.forClass(UserAuthenticationSuccessEvent.class);
         verify(listener).onApplicationEvent(captor.capture());
@@ -170,7 +174,7 @@ public class AuditCheckMvcMockTests {
         //success means a 302 to / (failure is 302 to /login?error...)
         mockMvc.perform(loginPost)
                 .andExpect(status().is3xxRedirection())
-                .andExpect(header().string("Location", "/login?error=true"));
+                .andExpect(header().string("Location", "/login?error=login_failure"));
 
         ArgumentCaptor<AbstractUaaEvent> captor  = ArgumentCaptor.forClass(AbstractUaaEvent.class);
         verify(listener, atLeast(2)).onApplicationEvent(captor.capture());
@@ -179,6 +183,57 @@ public class AuditCheckMvcMockTests {
         PrincipalAuthenticationFailureEvent event2 = (PrincipalAuthenticationFailureEvent)captor.getAllValues().get(1);
         assertEquals(testAccounts.getUserName(), event1.getUser().getUsername());
         assertEquals(testAccounts.getUserName(), event2.getName());
+    }
+
+    @Test
+    public void unverifiedUserAuthenticationWhenAllowedTest() throws Exception {
+        String adminToken = testClient.getClientCredentialsOAuthAccessToken(
+                testAccounts.getAdminClientId(),
+                testAccounts.getAdminClientSecret(),
+                "uaa.admin,scim.write");
+
+        ScimUser molly = createUser(adminToken, "molly", "Molly", "Collywobble", "molly@example.com", "wobble");
+
+        MockHttpServletRequestBuilder loginPost = post("/authenticate")
+                .accept(MediaType.APPLICATION_JSON_VALUE)
+                .param("username", molly.getUserName())
+                .param("password", "wobble");
+        mockMvc.perform(loginPost)
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<UserAuthenticationSuccessEvent> captor  = ArgumentCaptor.forClass(UserAuthenticationSuccessEvent.class);
+        verify(authSuccessListener, times(1)).onApplicationEvent(captor.capture());
+        UserAuthenticationSuccessEvent event = captor.getValue();
+        assertEquals("molly", event.getUser().getUsername());
+    }
+
+    @Test
+    public void unverifiedUserAuthenticationWhenNotAllowedTest() throws Exception {
+        ((MockEnvironment) webApplicationContext.getEnvironment()).setProperty("allowUnverifiedUsers", "false");
+        webApplicationContext.refresh();
+        webApplicationContext.addApplicationListener(listener);
+        webApplicationContext.addApplicationListener(testListener);
+
+        String adminToken = testClient.getClientCredentialsOAuthAccessToken(
+            testAccounts.getAdminClientId(),
+            testAccounts.getAdminClientSecret(),
+            "uaa.admin,scim.write");
+
+        ScimUser molly = createUser(adminToken, "molly", "Molly", "Collywobble", "molly@example.com", "wobble");
+
+        MockHttpServletRequestBuilder loginPost = post("/authenticate")
+            .accept(MediaType.APPLICATION_JSON_VALUE)
+            .param("username", molly.getUserName())
+            .param("password", "wobble");
+        mockMvc.perform(loginPost)
+            .andExpect(status().isForbidden());
+
+        ArgumentCaptor<AbstractUaaEvent> captor  = ArgumentCaptor.forClass(AbstractUaaEvent.class);
+        verify(listener, atLeast(1)).onApplicationEvent(captor.capture());
+
+        List<AbstractUaaEvent> allValues = captor.getAllValues();
+        UnverifiedUserAuthenticationEvent event = (UnverifiedUserAuthenticationEvent) allValues.get(allValues.size() - 1);
+        assertEquals(molly.getUserName(), event.getUser().getUsername());
     }
 
     @Test
@@ -207,7 +262,7 @@ public class AuditCheckMvcMockTests {
             testAccounts.getAdminClientSecret(),
             "uaa.admin,scim.write");
 
-        ScimUser jacob = createUser(adminToken, "jacob", "Jacob", "Gyllenhammer", "jacob@gyllenhammer.non");
+        ScimUser jacob = createUser(adminToken, "jacob", "Jacob", "Gyllenhammer", "jacob@gyllenhammer.non", null);
         String jacobId = jacob.getId();
 
         MockHttpServletRequestBuilder loginPost = post("/authenticate")
@@ -238,7 +293,7 @@ public class AuditCheckMvcMockTests {
         //success means a 302 to / (failure is 302 to /login?error...)
         mockMvc.perform(loginPost)
                 .andExpect(status().is3xxRedirection())
-                .andExpect(header().string("Location", "/login?error=true"));
+                .andExpect(header().string("Location", "/login?error=login_failure"));
 
         ArgumentCaptor<AbstractUaaEvent> captor  = ArgumentCaptor.forClass(AbstractUaaEvent.class);
         verify(listener, atLeast(2)).onApplicationEvent(captor.capture());
@@ -497,7 +552,7 @@ public class AuditCheckMvcMockTests {
             .param("external_id","jacob")
             .param("response_type","code")
             .param("client_id","login")
-            .param("redirect_uri", "http://localhost:8080/login")
+            .param("redirect_uri", "http://localhost:8080/uaa")
             .param("state","erw342");
 
         testListener.clearEvents();
@@ -644,9 +699,9 @@ public class AuditCheckMvcMockTests {
             testAccounts.getAdminClientSecret(),
             "uaa.admin,scim.write");
 
-        ScimUser jacob = createUser(adminToken, "jacob", "Jacob", "Gyllenhammer", "jacob@gyllenhammer.non");
-        ScimUser emily = createUser(adminToken, "emily", "Emily", "Gyllenhammer", "emily@gyllenhammer.non");
-        ScimUser jonas = createUser(adminToken, "jonas", "Jonas", "Gyllenhammer", "jonas@gyllenhammer.non");
+        ScimUser jacob = createUser(adminToken, "jacob", "Jacob", "Gyllenhammer", "jacob@gyllenhammer.non", null);
+        ScimUser emily = createUser(adminToken, "emily", "Emily", "Gyllenhammer", "emily@gyllenhammer.non", null);
+        ScimUser jonas = createUser(adminToken, "jonas", "Jonas", "Gyllenhammer", "jonas@gyllenhammer.non", null);
 
 
         ScimGroup group = new ScimGroup("testgroup");
@@ -733,11 +788,12 @@ public class AuditCheckMvcMockTests {
 
     }
 
-    private ScimUser createUser(String adminToken, String username, String firstname, String lastname, String email) throws Exception {
+    private ScimUser createUser(String adminToken, String username, String firstname, String lastname, String email, String password) throws Exception {
         ScimUser user = new ScimUser();
         user.setUserName(username);
         user.setName(new ScimUser.Name(firstname, lastname));
         user.addEmail(email);
+        user.setPassword(password);
 
         MockHttpServletRequestBuilder userPost = post("/Users")
             .accept(MediaType.APPLICATION_JSON_VALUE)

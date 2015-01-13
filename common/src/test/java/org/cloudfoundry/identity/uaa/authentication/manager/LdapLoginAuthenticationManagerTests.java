@@ -14,6 +14,7 @@
  */
 package org.cloudfoundry.identity.uaa.authentication.manager;
 
+import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.ldap.ExtendedLdapUserDetails;
 import org.cloudfoundry.identity.uaa.ldap.extension.ExtendedLdapUserImpl;
 import org.cloudfoundry.identity.uaa.ldap.extension.SpringSecurityLdapTemplate;
@@ -156,7 +157,8 @@ public class LdapLoginAuthenticationManagerTests  {
             "familyname",
             new Date(),
             new Date(),
-            "origin",
-            EXTERNAL_ID);
+            Origin.ORIGIN,
+            EXTERNAL_ID,
+            false);
     }
 }

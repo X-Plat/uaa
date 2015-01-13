@@ -13,11 +13,6 @@
 
 package org.cloudfoundry.identity.uaa.oauth;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -26,37 +21,24 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.cloudfoundry.identity.uaa.authorization.ExternalGroupMappingAuthorizationManager;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import org.cloudfoundry.identity.uaa.security.SecurityContextAccessor;
 import org.cloudfoundry.identity.uaa.security.StubSecurityContextAccessor;
-import org.cloudfoundry.identity.uaa.test.NullSafeSystemProfileValueSource;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.oauth2.common.exceptions.InvalidScopeException;
+import org.springframework.security.oauth2.common.util.OAuth2Utils;
 import org.springframework.security.oauth2.provider.AuthorizationRequest;
-import org.springframework.security.oauth2.provider.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientDetailsService;
-import org.springframework.security.oauth2.provider.DefaultAuthorizationRequest;
-import org.springframework.test.annotation.IfProfileValue;
-import org.springframework.test.annotation.ProfileValueSourceConfiguration;
-import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.security.oauth2.provider.OAuth2Request;
+import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.util.StringUtils;
 
-/**
- * @author Dave Syer
- * 
- */
-
-@ContextConfiguration(locations = { "classpath:spring/env.xml", "classpath:spring/data-source.xml" })
-@RunWith(SpringJUnit4ClassRunner.class)
-@IfProfileValue(name = "spring.profiles.active", values = { "", "test,postgresql", "hsqldb", "test,mysql",
-                "test,oracle" })
-@ProfileValueSourceConfiguration(NullSafeSystemProfileValueSource.class)
 public class UaaAuthorizationRequestManagerTests {
 
     private UaaAuthorizationRequestManager factory;
@@ -68,11 +50,35 @@ public class UaaAuthorizationRequestManagerTests {
     private BaseClientDetails client = new BaseClientDetails();
 
     @Before
-    public void init() {
+    public void initUaaAuthorizationRequestManagerTests() {
         parameters.put("client_id", "foo");
         factory = new UaaAuthorizationRequestManager(clientDetailsService);
         factory.setSecurityContextAccessor(new StubSecurityContextAccessor());
         Mockito.when(clientDetailsService.loadClientByClientId("foo")).thenReturn(client);
+    }
+
+    @Test
+    public void testTokenRequestIncludesResourceIds() {
+        SecurityContextAccessor securityContextAccessor = new StubSecurityContextAccessor() {
+            @Override
+            public boolean isUser() {
+                return false;
+            }
+
+            @Override
+            public Collection<? extends GrantedAuthority> getAuthorities() {
+                return AuthorityUtils.commaSeparatedStringToAuthorityList("aud1.test aud2.test");
+            }
+        };
+        parameters.put("scope", "aud1.test aud2.test");
+        parameters.put("client_id", client.getClientId());
+        parameters.put(OAuth2Utils.GRANT_TYPE, "client_credentials");
+        factory.setDefaultScopes(Arrays.asList("aud1.test"));
+        factory.setSecurityContextAccessor(securityContextAccessor);
+        client.setScope(StringUtils.commaDelimitedListToSet("aud1.test,aud2.test"));
+        OAuth2Request request = factory.createTokenRequest(parameters, client).createOAuth2Request(client);
+        assertEquals(StringUtils.commaDelimitedListToSet("aud1.test,aud2.test"), new TreeSet<>(request.getScope()));
+        assertEquals(StringUtils.commaDelimitedListToSet("aud1,aud2"), new TreeSet<>(request.getResourceIds()));
     }
 
     @Test
@@ -105,7 +111,7 @@ public class UaaAuthorizationRequestManagerTests {
         client.setScope(StringUtils.commaDelimitedListToSet("one,two,foo.bar"));
         AuthorizationRequest request = factory.createAuthorizationRequest(parameters);
         assertEquals(StringUtils.commaDelimitedListToSet("foo.bar"), new TreeSet<String>(request.getScope()));
-        factory.validateParameters(request.getAuthorizationParameters(), client);
+        factory.validateParameters(request.getRequestParameters(), client);
     }
 
     @Test
@@ -127,7 +133,7 @@ public class UaaAuthorizationRequestManagerTests {
         client.setScope(StringUtils.commaDelimitedListToSet("space.*.developer"));
         AuthorizationRequest request = factory.createAuthorizationRequest(parameters);
         assertEquals(StringUtils.commaDelimitedListToSet("space.1.developer,space.2.developer"), new TreeSet<String>(request.getScope()));
-        factory.validateParameters(request.getAuthorizationParameters(), client);
+        factory.validateParameters(request.getRequestParameters(), client);
     }
 
     @Test
@@ -218,18 +224,19 @@ public class UaaAuthorizationRequestManagerTests {
 
     @Test
     public void testScopesValid() throws Exception {
+        parameters.put("scope","read");
         factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write", "implicit", null));
     }
 
     @Test
     public void testScopesValidWithWildcard() throws Exception {
-        parameters.put("scope","read,write,space.1.developer,space.2.developer");
+        parameters.put("scope","read write space.1.developer space.2.developer");
         factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write,space.*.developer", "implicit", null));
     }
 
     @Test(expected = InvalidScopeException.class)
     public void testScopesInvValidWithWildcard() throws Exception {
-        parameters.put("scope","read,write,space.1.developer,space.2.developer,space.1.admin");
+        parameters.put("scope","read write space.1.developer space.2.developer space.1.admin");
         factory.validateParameters(parameters, new BaseClientDetails("foo", null, "read,write,space.*.developer", "implicit", null));
     }
 

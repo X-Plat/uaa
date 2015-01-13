@@ -12,6 +12,7 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.endpoints;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -69,7 +70,8 @@ public class PasswordResetEndpointsTest {
 
         mockMvc.perform(post)
                 .andExpect(status().isCreated())
-                .andExpect(content().string("secret_code"));
+                .andExpect(content().string(containsString("\"code\":\"secret_code\"")))
+                .andExpect(content().string(containsString("\"user_id\":\"id001\"")));
     }
 
     @Test
@@ -83,7 +85,7 @@ public class PasswordResetEndpointsTest {
                 .accept(APPLICATION_JSON);
 
         mockMvc.perform(post)
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -103,7 +105,8 @@ public class PasswordResetEndpointsTest {
             .accept(APPLICATION_JSON);
 
         mockMvc.perform(post)
-            .andExpect(status().isConflict());
+            .andExpect(status().isConflict())
+            .andExpect(content().string(containsString("\"user_id\":\"id001\"")));
     }
 
     @Test
@@ -120,7 +123,8 @@ public class PasswordResetEndpointsTest {
 
         mockMvc.perform(post)
             .andExpect(status().isCreated())
-            .andExpect(content().string("secret_code"));
+            .andExpect(content().string(containsString("\"code\":\"secret_code\"")))
+            .andExpect(content().string(containsString("\"user_id\":\"id001\"")));
 
 
         Mockito.when(scimUserProvisioning.query("userName eq \"user\\\"'@example.com\" and origin eq \"" + Origin.UAA + "\""))
@@ -160,6 +164,32 @@ public class PasswordResetEndpointsTest {
                 .andExpect(jsonPath("$.username").value("user@example.com"));
 
         Mockito.verify(scimUserProvisioning).changePassword("eyedee", null, "new_secret");
+    }
+
+    @Test
+    public void testChangingAPasswordForUnverifiedUser() throws Exception {
+        Mockito.when(expiringCodeStore.retrieveCode("secret_code"))
+                .thenReturn(new ExpiringCode("secret_code", new Timestamp(System.currentTimeMillis()), "eyedee"));
+
+        ScimUser scimUser = new ScimUser("eyedee", "user@example.com", "User", "Man");
+        scimUser.addEmail("user@example.com");
+        scimUser.setVerified(false);
+        Mockito.when(scimUserProvisioning.retrieve("eyedee")).thenReturn(scimUser);
+
+        MockHttpServletRequestBuilder post = post("/password_change")
+                .contentType(APPLICATION_JSON)
+                .content("{\"code\":\"secret_code\",\"new_password\":\"new_secret\"}")
+                .accept(APPLICATION_JSON);
+
+        SecurityContextHolder.getContext().setAuthentication(new MockAuthentication());
+
+        mockMvc.perform(post)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user_id").value("eyedee"))
+                .andExpect(jsonPath("$.username").value("user@example.com"));
+
+        Mockito.verify(scimUserProvisioning).changePassword("eyedee", null, "new_secret");
+        Mockito.verify(scimUserProvisioning).verifyUser(scimUser.getId(), -1);
     }
 
     @Test

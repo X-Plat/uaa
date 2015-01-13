@@ -44,13 +44,13 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.DefaultOAuth2ClientContext;
 import org.springframework.security.oauth2.client.OAuth2ClientContext;
 import org.springframework.security.oauth2.client.OAuth2RestTemplate;
+import org.springframework.security.oauth2.client.http.OAuth2ErrorHandler;
 import org.springframework.security.oauth2.client.resource.OAuth2ProtectedResourceDetails;
 import org.springframework.security.oauth2.client.token.AccessTokenRequest;
 import org.springframework.security.oauth2.client.token.DefaultAccessTokenRequest;
-import org.springframework.security.oauth2.provider.BaseClientDetails;
+import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientDetails;
 import org.springframework.util.Assert;
-import org.springframework.web.client.ResponseErrorHandler;
 import org.springframework.web.client.RestOperations;
 
 /**
@@ -214,7 +214,7 @@ public class TestAccountSetup extends TestWatchman {
         @SuppressWarnings("unchecked")
         Collection<Map<String, String>> groups = (Collection<Map<String, String>>) map.get("groups");
         return new UaaUser(id, userName, "<N/A>", email, extractAuthorities(groups), givenName, familyName, new Date(),
-                        new Date(), Origin.UAA, "externalId");
+                        new Date(), Origin.UAA, "externalId", false);
     }
 
     private List<? extends GrantedAuthority> extractAuthorities(Collection<Map<String, String>> groups) {
@@ -264,7 +264,7 @@ public class TestAccountSetup extends TestWatchman {
                 connection.setInstanceFollowRedirects(false);
             }
         });
-        client.setErrorHandler(new ResponseErrorHandler() {
+        client.setErrorHandler(new OAuth2ErrorHandler(client.getResource()) {
             // Pass errors through in response entity for status code analysis
             @Override
             public boolean hasError(ClientHttpResponse response) throws IOException {

@@ -15,15 +15,23 @@
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.springframework.org/schema/beans"
     xmlns:oauth="http://www.springframework.org/schema/security/oauth2" xmlns:util="http://www.springframework.org/schema/util"
     xmlns:aop="http://www.springframework.org/schema/aop"
-    xsi:schemaLocation="http://www.springframework.org/schema/security/oauth2 http://www.springframework.org/schema/security/spring-security-oauth2-1.0.xsd
+    xsi:schemaLocation="http://www.springframework.org/schema/security/oauth2 http://www.springframework.org/schema/security/spring-security-oauth2-2.0.xsd
 		http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-3.2.xsd
 		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
 		http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util-4.0.xsd
 		http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-4.0.xsd">
 
+    <!--<bean id="tokenEndpoint" class="org.springframework.security.oauth2.provider.endpoint.TokenEndpoint" autowire="byType">-->
+        <!--<property name="OAuth2RequestValidator">-->
+            <!--<bean class="org.cloudfoundry.identity.uaa.oauth.token.UaaOauth2RequestValidator"/>-->
+        <!--</property>-->
+        <!--<property name="clientDetailsService" ref="jdbcClientDetailsService"/>-->
+    <!--</bean>-->
+    <bean id="oauth2RequestValidator" class="org.cloudfoundry.identity.uaa.oauth.token.UaaOauth2RequestValidator"/>
+
     <oauth:authorization-server client-details-service-ref="jdbcClientDetailsService"
         token-services-ref="tokenServices" user-approval-handler-ref="userManagedApprovalHandler"
-        authorization-request-manager-ref="authorizationRequestManager">
+        authorization-request-manager-ref="authorizationRequestManager" request-validator-ref="oauth2RequestValidator">
         <oauth:authorization-code authorization-code-services-ref="authorizationCodeServices" />
         <oauth:implicit />
         <oauth:refresh-token />
@@ -31,11 +39,68 @@
         <oauth:password authentication-manager-ref="compositeAuthenticationManager" />
     </oauth:authorization-server>
 
+    <!-- Owner password flow for external authentication (SAML) -->
+    <!-- Pattern: /oauth/token parameters:{grant_type=password,passcode= -->
+    <http name="tokenEndpointSecurityForPasscodes" request-matcher-ref="passcodeTokenMatcher" create-session="stateless"
+          entry-point-ref="basicAuthenticationEntryPoint" xmlns="http://www.springframework.org/schema/security"  authentication-manager-ref="emptyAuthenticationManager">
+        <intercept-url pattern="/**" access="IS_AUTHENTICATED_FULLY" />
+        <anonymous enabled="false" />
+        <custom-filter ref="backwardsCompatibleScopeParameter" position="FIRST"/>
+        <custom-filter ref="clientAuthenticationFilter" position="BASIC_AUTH_FILTER" />
+        <custom-filter ref="passcodeAuthenticationFilter" after="BASIC_AUTH_FILTER" />
+        <access-denied-handler ref="oauthAccessDeniedHandler" />
+    </http>
+
+    <bean id="passcodeAuthenticationFilter" class="org.cloudfoundry.identity.uaa.login.PasscodeAuthenticationFilter">
+        <constructor-arg ref="userDatabase" />
+        <constructor-arg ref="authzAuthenticationMgr" />
+        <constructor-arg ref="authorizationRequestManager"/>
+        <constructor-arg ref="codeStore"/>
+        <property name="authenticationDetailsSource" ref="authenticationDetailsSource" />
+        <property name="parameterNames">
+            <list>
+                <value>username</value>
+                <value>password</value>
+                <value>passcode</value>
+                <value>credentials</value>
+                <value>origin</value>
+                <value>user_id</value>
+            </list>
+        </property>
+    </bean>
+
+    <bean id="passcodeTokenMatcher" class="org.cloudfoundry.identity.uaa.security.web.UaaRequestMatcher">
+        <constructor-arg value="/oauth/token" />
+        <property name="accept">
+            <list>
+                <value>application/json</value>
+                <value>application/x-www-form-urlencoded</value>
+            </list>
+        </property>
+        <property name="parameters">
+            <map>
+                <entry key="grant_type" value="password" />
+                <entry key="passcode" value="" />
+            </map>
+        </property>
+    </bean>
+
+    <bean id="uaaAuthorizationEndpoint" class="org.cloudfoundry.identity.uaa.authorization.UaaAuthorizationEndpoint">
+        <property name="authorizationCodeServices" ref="authorizationCodeServices"/>
+        <property name="OAuth2RequestValidator" ref="oauth2RequestValidator"/>
+        <property name="userApprovalHandler" ref="userManagedApprovalHandler"/>
+        <property name="tokenGranter" ref="oauth2TokenGranter"/> <!--this bean create by oauth:authorization-server -->
+        <property name="clientDetailsService" ref="jdbcClientDetailsService"/>
+        <property name="OAuth2RequestFactory" ref="authorizationRequestManager"/>
+        <property name="fallbackToAuthcode" value="${oauth.openid.fallbackToAuthcode:false}"/>
+    </bean>
+
     <!--/oauth/token with any match -->
     <http name="tokenEndpointSecurity" create-session="stateless" authentication-manager-ref="clientAuthenticationManager"
         pattern="/oauth/token/**" entry-point-ref="basicAuthenticationEntryPoint" xmlns="http://www.springframework.org/schema/security">
         <intercept-url pattern="/**" access="IS_AUTHENTICATED_FULLY" />
         <anonymous enabled="false" />
+        <custom-filter ref="backwardsCompatibleScopeParameter" position="FIRST"/>
         <custom-filter ref="clientAuthenticationFilter" position="BASIC_AUTH_FILTER" />
         <custom-filter ref="tokenEndpointAuthenticationFilter" after="BASIC_AUTH_FILTER" />
         <access-denied-handler ref="oauthAccessDeniedHandler" />
@@ -48,6 +113,7 @@
         entry-point-ref="oauthAuthenticationEntryPoint" authentication-manager-ref="authzAuthenticationMgr"
         xmlns="http://www.springframework.org/schema/security">
         <intercept-url pattern="/**" access="IS_AUTHENTICATED_FULLY" />
+        <custom-filter ref="backwardsCompatibleScopeParameter" position="FIRST"/>
         <custom-filter ref="authzAuthenticationFilter" position="FORM_LOGIN_FILTER" />
         <anonymous enabled="false" />
         <access-denied-handler ref="oauthAccessDeniedHandler" />
@@ -61,14 +127,16 @@
 
     <bean id="compositeAuthenticationManager" class="org.cloudfoundry.identity.uaa.authentication.manager.CompositeAuthenticationManager" />
 
-    <bean id="tokenEndpointAuthenticationFilter" class="org.springframework.security.oauth2.provider.endpoint.TokenEndpointAuthenticationFilter">
+    <bean id="tokenEndpointAuthenticationFilter" class="org.cloudfoundry.identity.uaa.authentication.BackwardsCompatibleTokenEndpointAuthenticationFilter">
         <constructor-arg ref="authzAuthenticationMgr" />
+        <constructor-arg ref="authorizationRequestManager"/>
         <property name="authenticationDetailsSource" ref="authenticationDetailsSource" />
+        <property name="authenticationEntryPoint" ref="basicAuthenticationEntryPoint" />
     </bean>
 
     <authentication-manager id="clientAuthenticationManager" xmlns="http://www.springframework.org/schema/security">
         <authentication-provider user-service-ref="clientDetailsUserService">
-            <password-encoder ref="bcryptPasswordEncoder" />
+            <password-encoder ref="cachingPasswordEncoder" />
         </authentication-provider>
     </authentication-manager>
 
@@ -84,9 +152,11 @@
         </aop:aspect>
     </aop:config>
 
+
+
     <bean id="clientDetailsUserService" class="org.springframework.security.oauth2.provider.client.ClientDetailsUserDetailsService">
         <constructor-arg ref="jdbcClientDetailsService" />
-        <property name="passwordEncoder" ref="bcryptPasswordEncoder" />
+        <property name="passwordEncoder" ref="cachingPasswordEncoder" />
     </bean>
 
     <bean id="oauthAuthorizeRequestMatcher" class="org.cloudfoundry.identity.uaa.security.web.UaaRequestMatcher">
@@ -124,6 +194,7 @@
         entry-point-ref="oauthAuthenticationEntryPoint" authentication-manager-ref="authzAuthenticationMgr"
         xmlns="http://www.springframework.org/schema/security">
         <intercept-url pattern="/**" access="IS_AUTHENTICATED_FULLY" />
+        <custom-filter ref="backwardsCompatibleScopeParameter" position="FIRST"/>
         <custom-filter ref="authzAuthenticationFilter" position="FORM_LOGIN_FILTER" />
         <anonymous enabled="false" />
         <access-denied-handler ref="oauthAccessDeniedHandler" />
@@ -152,7 +223,11 @@
     </bean>
 
     <bean id="userApprovalHandler" class="org.cloudfoundry.identity.uaa.oauth.UaaUserApprovalHandler">
-        <property name="tokenServices" ref="tokenServices" />
+        <!--<property name="tokenServices" ref="tokenServices" />-->
+        <!--TODO - set to true once we have persistent tokens -->
+        <property name="useTokenServices" value="false"/>
+        <property name="requestFactory" ref="authorizationRequestManager"/>
+        <property name="tokenServices" ref="tokenServices"/>
         <property name="clientDetailsService" ref="jdbcClientDetailsService" />
     </bean>
 
@@ -241,7 +316,9 @@
         <constructor-arg ref="userDatabase"/>
         <property name="accountLoginPolicy" ref="periodLockoutPolicy"/>
         <property name="origin" value="uaa"/>
+        <property name="allowUnverifiedUsers" value="${allowUnverifiedUsers:true}"/>
     </bean>
+
     <bean id="uaaAuthenticationMgr" parent="abstractAuthzAuthenticationMgr"/>
 
     <bean id="authzAuthenticationMgr" parent="abstractAuthzAuthenticationMgr"/>

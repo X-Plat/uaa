@@ -51,6 +51,7 @@ public class UaaConfiguration {
     public boolean dump_requests;
     public boolean require_https;
     public boolean loginAddnew;
+    public boolean allowUnverifiedUsers;
     @Valid
     public PasswordPolicy passwordPolicy;
     @Valid
@@ -67,6 +68,23 @@ public class UaaConfiguration {
     public CloudController cloud_controller;
     @Valid
     public Map<String,Object> ldap;
+
+    @Valid
+    public Map<String,Object> login;
+    @Valid
+    public Map<String,Object> links;
+    @Valid
+    public Map<String,Object> smtp;
+    @Valid
+    public Map<String,Object> tiles;
+    @Valid
+    public Map<String,Object> notifications;
+    @Valid
+    public Map<String,Object> uaa;
+    @Valid
+    public String assetBaseUrl;
+    @Valid
+    public String LOGIN_SECRET;
 
     public static class CloudController {
         @Valid

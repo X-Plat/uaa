@@ -12,27 +12,25 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.jdbc;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
-import javax.sql.DataSource;
-
+import static org.junit.Assert.fail;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.rest.SimpleAttributeNameMapper;
 import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
-import org.cloudfoundry.identity.uaa.rest.jdbc.LimitSqlAdapter;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUser.Group;
 import org.cloudfoundry.identity.uaa.scim.ScimUser.PhoneNumber;
@@ -41,42 +39,18 @@ import org.cloudfoundry.identity.uaa.scim.exception.InvalidScimResourceException
 import org.cloudfoundry.identity.uaa.scim.exception.ScimResourceAlreadyExistsException;
 import org.cloudfoundry.identity.uaa.scim.exception.ScimResourceNotFoundException;
 import org.cloudfoundry.identity.uaa.scim.test.TestUtils;
-import org.cloudfoundry.identity.uaa.test.NullSafeSystemProfileValueSource;
+import org.cloudfoundry.identity.uaa.test.JdbcTestBase;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.bcrypt.BCrypt;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.test.annotation.IfProfileValue;
-import org.springframework.test.annotation.ProfileValueSourceConfiguration;
-import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
-/**
- * @author Luke Taylor
- * @author Dave Syer
- */
-@ContextConfiguration(locations = { "classpath:spring/env.xml", "classpath:spring/data-source.xml" })
-@RunWith(SpringJUnit4ClassRunner.class)
-@IfProfileValue(name = "spring.profiles.active", values = { "", "test,postgresql", "hsqldb", "test,mysql",
-                "test,oracle" })
-@ProfileValueSourceConfiguration(NullSafeSystemProfileValueSource.class)
-public class JdbcScimUserProvisioningTests {
-
-    @Autowired
-    private DataSource dataSource;
-
-    @Autowired
-    private JdbcTemplate template;
-
-    @Autowired
-    private LimitSqlAdapter limitSqlAdapter;
+public class JdbcScimUserProvisioningTests extends JdbcTestBase {
 
     private JdbcScimUserProvisioning db;
 
@@ -95,8 +69,8 @@ public class JdbcScimUserProvisioningTests {
     private int existingUserCount = 0;
 
     @Before
-    public void createDatasource() throws Exception {
-        db = new JdbcScimUserProvisioning(template, new JdbcPagingListFactory(template, limitSqlAdapter));
+    public void initJdbcScimUserProvisioningTests() throws Exception {
+        db = new JdbcScimUserProvisioning(jdbcTemplate, new JdbcPagingListFactory(jdbcTemplate, limitSqlAdapter));
         ScimSearchQueryConverter filterConverter = new ScimSearchQueryConverter();
         Map<String, String> replaceWith = new HashMap<String, String>();
         replaceWith.put("emails\\.value", "email");
@@ -106,7 +80,7 @@ public class JdbcScimUserProvisioningTests {
         db.setQueryConverter(filterConverter);
         BCryptPasswordEncoder pe = new BCryptPasswordEncoder(4);
 
-        existingUserCount = template.queryForInt("select count(id) from users");
+        existingUserCount = jdbcTemplate.queryForInt("select count(id) from users");
 
         addUser(JOE_ID, "joe", pe.encode("joespassword"), "joe@joe.com", "Joe", "User", "+1-222-1234567");
         addUser(MABEL_ID, "mabel", pe.encode("mabelspassword"), "mabel@mabel.com", "Mabel", "User", "");
@@ -120,20 +94,23 @@ public class JdbcScimUserProvisioningTests {
 
     private void addUser(String id, String username, String password, String email, String givenName,
                     String familyName, String phoneNumber) {
-        TestUtils.assertNoSuchUser(template, "id", id);
-        template.execute(String.format(addUserSqlFormat, id, username, password, email, givenName, familyName,
+        TestUtils.assertNoSuchUser(jdbcTemplate, "id", id);
+        jdbcTemplate.execute(String.format(addUserSqlFormat, id, username, password, email, givenName, familyName,
                         phoneNumber));
     }
 
     private void removeUser(String id) {
-        template.execute(String.format(deleteUserSqlFormat, id));
+        jdbcTemplate.execute(String.format(deleteUserSqlFormat, id));
     }
 
     @After
     public void clear() throws Exception {
-        template.execute("delete from users where id = '" + JOE_ID + "'");
-        template.execute("delete from users where id = '" + MABEL_ID + "'");
-        template.execute("delete from users where userName = 'JO@FOO.COM'");
+        jdbcTemplate.execute("delete from users where id = '" + JOE_ID + "'");
+        jdbcTemplate.execute("delete from users where id = '" + MABEL_ID + "'");
+        jdbcTemplate.execute("delete from users where upper(userName) = 'JO@FOO.COM'");
+        jdbcTemplate.execute("delete from users where upper(userName) = 'JONAH@FOO.COM'");
+        jdbcTemplate.execute("delete from users where upper(userName) = 'RO''GALLAGHER@EXAMPLE.COM'");
+        jdbcTemplate.execute("delete from users where upper(userName) = 'USER@EXAMPLE.COM'");
     }
 
     @Test
@@ -144,7 +121,7 @@ public class JdbcScimUserProvisioningTests {
         assertEquals("jo@foo.com", created.getUserName());
         assertNotNull(created.getId());
         assertNotSame(user.getId(), created.getId());
-        Map<String, Object> map = template.queryForMap("select * from users where id=?", created.getId());
+        Map<String, Object> map = jdbcTemplate.queryForMap("select * from users where id=?", created.getId());
         assertEquals(user.getUserName(), map.get("userName"));
         assertEquals(user.getUserType(), map.get(UaaAuthority.UAA_USER.getUserType()));
         assertNull(created.getGroups());
@@ -163,7 +140,7 @@ public class JdbcScimUserProvisioningTests {
         assertEquals("jo@foo.com", created.getUserName());
         assertNotNull(created.getId());
         assertNotSame(user.getId(), created.getId());
-        Map<String, Object> map = template.queryForMap("select * from users where id=?", created.getId());
+        Map<String, Object> map = jdbcTemplate.queryForMap("select * from users where id=?", created.getId());
         assertEquals(user.getUserName(), map.get("userName"));
         assertEquals(user.getUserType(), map.get(UaaAuthority.UAA_USER.getUserType()));
         assertNull(created.getGroups());
@@ -181,16 +158,23 @@ public class JdbcScimUserProvisioningTests {
 
     @Test
     public void canCreateUserWithoutGivenNameAndFamilyName() {
-        ScimUser user = new ScimUser(null, "jo@foo.com", null, null);
+        ScimUser user = new ScimUser(null, "jonah@foo.com", null, null);
         user.addEmail("jo@blah.com");
         ScimUser created = db.createUser(user, "j7hyqpassX");
-        assertEquals("jo@foo.com", created.getUserName());
+        assertEquals("jonah@foo.com", created.getUserName());
         assertNotNull(created.getId());
         assertNotSame(user.getId(), created.getId());
-        Map<String, Object> map = template.queryForMap("select * from users where id=?", created.getId());
+        Map<String, Object> map = jdbcTemplate.queryForMap("select * from users where id=?", created.getId());
         assertEquals(user.getUserName(), map.get("userName"));
         assertEquals(user.getUserType(), map.get(UaaAuthority.UAA_USER.getUserType()));
         assertNull(created.getGroups());
+    }
+
+    @Test
+    public void canCreateUserWithSingleQuoteInEmailAndUsername() {
+        ScimUser user = new ScimUser(null, "ro'gallagher@example.com", "Rob", "O'Gallagher");
+        user.addEmail("ro'gallagher@example.com");
+        db.createUser(user, "j7hyqpassX");
     }
 
     @Test(expected = InvalidScimResourceException.class)
@@ -217,7 +201,7 @@ public class JdbcScimUserProvisioningTests {
         assertEquals(JOE_ID, joe.getId());
         assertNull(joe.getGroups());
     }
-    
+
     @Test
     public void updateWithEmptyPhoneListWorks() {
         ScimUser jo = new ScimUser(null, "josephine", "Jo", "NewUser");
@@ -289,14 +273,14 @@ public class JdbcScimUserProvisioningTests {
     @Test
     public void canChangePasswordWithoutOldPassword() throws Exception {
         db.changePassword(JOE_ID, null, "koala123$marissa");
-        String storedPassword = template.queryForObject("SELECT password from users where ID=?", String.class, JOE_ID);
+        String storedPassword = jdbcTemplate.queryForObject("SELECT password from users where ID=?", String.class, JOE_ID);
         assertTrue(BCrypt.checkpw("koala123$marissa", storedPassword));
     }
 
     @Test
     public void canChangePasswordWithCorrectOldPassword() throws Exception {
         db.changePassword(JOE_ID, "joespassword", "koala123$marissa");
-        String storedPassword = template.queryForObject("SELECT password from users where ID=?", String.class, JOE_ID);
+        String storedPassword = jdbcTemplate.queryForObject("SELECT password from users where ID=?", String.class, JOE_ID);
         assertTrue(BCrypt.checkpw("koala123$marissa", storedPassword));
     }
 
@@ -331,7 +315,7 @@ public class JdbcScimUserProvisioningTests {
     public void canDeactivateExistingUser() {
         String tmpUserId = createUserForDelete();
         ScimUser deletedUser = db.delete(tmpUserId, 0);
-        assertEquals(1, template.queryForList("select * from users where id=? and active=?", tmpUserId, false).size());
+        assertEquals(1, jdbcTemplate.queryForList("select * from users where id=? and active=?", tmpUserId, false).size());
         assertFalse(deletedUser.isActive());
         assertEquals(1, db.query("username eq \"" + tmpUserId + "\" and active eq false").size());
         removeUser(tmpUserId);
@@ -367,7 +351,7 @@ public class JdbcScimUserProvisioningTests {
         String tmpUserId = createUserForDelete();
         db.setDeactivateOnDelete(false);
         db.delete(tmpUserId, 0);
-        assertEquals(0, template.queryForList("select * from users where id=?", tmpUserId).size());
+        assertEquals(0, jdbcTemplate.queryForList("select * from users where id=?", tmpUserId).size());
         assertEquals(0, db.query("username eq \"" + tmpUserId + "\"").size());
     }
 
@@ -377,7 +361,7 @@ public class JdbcScimUserProvisioningTests {
         String tmpUserId = createUserForDelete();
         db.setDeactivateOnDelete(false);
         ScimUser deletedUser = db.delete(tmpUserId, 0);
-        assertEquals(0, template.queryForList("select * from users where id=?", tmpUserId).size());
+        assertEquals(0, jdbcTemplate.queryForList("select * from users where id=?", tmpUserId).size());
 
         deletedUser.setActive(true);
         ScimUser user = db.createUser(deletedUser, "foobarspam1234");
@@ -391,7 +375,7 @@ public class JdbcScimUserProvisioningTests {
     @Test
     public void testCreatedUserNotVerified() {
         String tmpUserIdString = createUserForDelete();
-        boolean verified = template.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
+        boolean verified = jdbcTemplate.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
         assertFalse(verified);
         ScimUser user = db.retrieve(tmpUserIdString);
         assertFalse(user.isVerified());
@@ -399,12 +383,36 @@ public class JdbcScimUserProvisioningTests {
     }
 
     @Test
+    public void testCreateUserWithDuplicateUsername() throws Exception {
+        addUser("cba09242-aa43-4247-9aa0-b5c75c281f94", "user@example.com", "password", "user@example.com", "first", "user", "90438");
+        ScimUser scimUser = new ScimUser("user-id-2", "user@example.com", "User", "Example");
+        ScimUser.Email email = new ScimUser.Email();
+        email.setValue("user@example.com");
+        scimUser.setEmails(Arrays.asList(email));
+        scimUser.setPassword("password");
+
+        try {
+            db.create(scimUser);
+            fail("Should have thrown an exception");
+        } catch (ScimResourceAlreadyExistsException e) {
+            Map<String,Object> userDetails = new HashMap<>();
+            userDetails.put("active", true);
+            userDetails.put("verified", false);
+            userDetails.put("user_id", "cba09242-aa43-4247-9aa0-b5c75c281f94");
+            assertEquals(HttpStatus.CONFLICT, e.getStatus());
+            assertEquals("Username already in use: user@example.com", e.getMessage());
+            assertEquals(userDetails, e.getExtraInfo());
+        }
+    }
+
+
+    @Test
     public void testUpdatedUserVerified() {
         String tmpUserIdString = createUserForDelete();
-        boolean verified = template.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
+        boolean verified = jdbcTemplate.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
         assertFalse(verified);
         db.verifyUser(tmpUserIdString, -1);
-        verified = template.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
+        verified = jdbcTemplate.queryForObject(verifyUserSqlFormat, Boolean.class, tmpUserIdString);
         assertTrue(verified);
         removeUser(tmpUserIdString);
     }
@@ -524,12 +532,12 @@ public class JdbcScimUserProvisioningTests {
 
     @Test
     public void canRetrieveUsersWithFilterContains() {
-        assertEquals(2 + existingUserCount, db.query("username co \"e\"").size());
+        assertEquals(2, db.query("username co \"e\"").size());
     }
 
     @Test
     public void canRetrieveUsersWithFilterStartsWith() {
-        assertEquals(1 + existingUserCount, db.query("username sw \"joe\"").size());
+        assertEquals(1, db.query("username sw \"joe\"").size());
     }
 
     @Test
@@ -544,7 +552,11 @@ public class JdbcScimUserProvisioningTests {
 
     @Test
     public void canRetrieveUsersWithGroupsFilter() {
-        assertEquals(2, db.query("groups.display co \"uaa.user\"").size());
+        List<ScimUser> users = db.query("groups.display co \"uaa.user\"");
+        assertEquals(2 + existingUserCount, users.size());
+        for (int i=0; i<users.size(); i++) {
+            assertNotNull(users.get(i));
+        }
     }
 
     @Test
@@ -579,12 +591,12 @@ public class JdbcScimUserProvisioningTests {
 
     @Test
     public void canRetrieveUsersWithFilterBooleanAnd() {
-        assertEquals(2 + existingUserCount, db.query("username pr and emails.value co \".com\"").size());
+        assertEquals(2, db.query("username pr and emails.value co \".com\"").size());
     }
 
     @Test
     public void canRetrieveUsersWithFilterBooleanOr() {
-        assertEquals(2 + existingUserCount, db.query("username eq \"joe\" or emails.value co \".com\"").size());
+        assertEquals(2, db.query("username eq \"joe\" or emails.value co \".com\"").size());
     }
 
     @Test
@@ -609,7 +621,7 @@ public class JdbcScimUserProvisioningTests {
 
     @Test(expected = IllegalArgumentException.class)
     public void cannotRetrieveUsersWithNativeSqlInjectionAttack() {
-        String password = template.queryForObject("select password from users where username='joe'", String.class);
+        String password = jdbcTemplate.queryForObject("select password from users where username='joe'", String.class);
         assertNotNull(password);
         Collection<ScimUser> users = db.query("username=\"joe\"; select " + SQL_INJECTION_FIELDS
                         + " from users where username='joe'");
@@ -618,7 +630,7 @@ public class JdbcScimUserProvisioningTests {
 
     @Test(expected = IllegalArgumentException.class)
     public void cannotRetrieveUsersWithSqlInjectionAttackOnGt() {
-        String password = template.queryForObject("select password from users where username='joe'", String.class);
+        String password = jdbcTemplate.queryForObject("select password from users where username='joe'", String.class);
         assertNotNull(password);
         Collection<ScimUser> users = db.query("username gt \"h\"; select " + SQL_INJECTION_FIELDS
                         + " from users where username='joe'");
@@ -627,7 +639,7 @@ public class JdbcScimUserProvisioningTests {
 
     @Test(expected = IllegalArgumentException.class)
     public void cannotRetrieveUsersWithSqlInjectionAttack() {
-        String password = template.queryForObject("select password from users where username='joe'", String.class);
+        String password = jdbcTemplate.queryForObject("select password from users where username='joe'", String.class);
         assertNotNull(password);
         Collection<ScimUser> users = db.query("username eq \"joe\"; select " + SQL_INJECTION_FIELDS
                         + " from users where username='joe'");
@@ -636,7 +648,7 @@ public class JdbcScimUserProvisioningTests {
 
     @Test(expected = IllegalArgumentException.class)
     public void cannotRetrieveUsersWithAnotherSqlInjectionAttack() {
-        String password = template.queryForObject("select password from users where username='joe'", String.class);
+        String password = jdbcTemplate.queryForObject("select password from users where username='joe'", String.class);
         assertNotNull(password);
         Collection<ScimUser> users = db.query("username eq \"joe\"\"; select id from users where id='''; select "
                         + SQL_INJECTION_FIELDS + " from users where username='joe'");
@@ -645,7 +657,7 @@ public class JdbcScimUserProvisioningTests {
 
     @Test(expected = IllegalArgumentException.class)
     public void cannotRetrieveUsersWithYetAnotherSqlInjectionAttack() {
-        String password = template.queryForObject("select password from users where username='joe'", String.class);
+        String password = jdbcTemplate.queryForObject("select password from users where username='joe'", String.class);
         assertNotNull(password);
         Collection<ScimUser> users = db.query("username eq \"joe\"'; select " + SQL_INJECTION_FIELDS
                         + " from users where username='joe''");

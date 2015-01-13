@@ -32,7 +32,7 @@ import org.springframework.security.oauth2.client.token.grant.code.Authorization
 import org.springframework.security.oauth2.client.token.grant.implicit.ImplicitResourceDetails;
 import org.springframework.security.oauth2.client.token.grant.password.ResourceOwnerPasswordResourceDetails;
 import org.springframework.security.oauth2.common.AuthenticationScheme;
-import org.springframework.security.oauth2.provider.BaseClientDetails;
+import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientDetails;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.StringUtils;
@@ -105,7 +105,7 @@ public class UaaTestAccounts implements TestAccounts {
 
     public UaaUser getUserWithRandomID() {
         UaaUser user = new UaaUser(UUID.randomUUID().toString(), getUserName(), "<N/A>", getEmail(),
-                        UaaAuthority.USER_AUTHORITIES, "Test", "User", new Date(), new Date(), Origin.UAA, "externalId");
+                        UaaAuthority.USER_AUTHORITIES, "Test", "User", new Date(), new Date(), Origin.UAA, "externalId", true);
         ReflectionTestUtils.setField(user, "password", getPassword());
         return user;
     }

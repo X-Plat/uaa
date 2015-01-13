@@ -35,13 +35,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
 import org.springframework.security.oauth2.provider.OAuth2Authentication;
-import org.springframework.util.StringUtils;
 
 import java.util.Date;
 import java.util.Map;
 
 public class LoginAuthenticationManager implements AuthenticationManager, ApplicationEventPublisherAware {
-    public static final String NotANumber = "NaN";
+    public static final String NotANumber = Origin.NotANumber;
 
     private final Log logger = LogFactory.getLog(getClass());
 
@@ -174,7 +173,8 @@ public class LoginAuthenticationManager implements AuthenticationManager, Applic
             new Date(),
             new Date(),
             origin,
-            name);
+            name,
+            false);
 
     }
 }

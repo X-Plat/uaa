@@ -53,6 +53,10 @@ public class DefaultSecurityContextAccessor implements SecurityContextAccessor {
             return true;
         }
 
+        if (a!=null && a.getPrincipal() instanceof UaaPrincipal) {
+            return true;
+        }
+
         return false;
     }
 
@@ -109,7 +113,7 @@ public class DefaultSecurityContextAccessor implements SecurityContextAccessor {
             return null;
         }
 
-        return ((OAuth2Authentication) a).getAuthorizationRequest().getClientId();
+        return ((OAuth2Authentication) a).getOAuth2Request().getClientId();
     }
 
     @Override
